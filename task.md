@@ -1,0 +1,4 @@
+- [ ] Update `usePuzzleStore.ts` with `setupStep` and `resetToSetup` action.
+- [ ] Update `SidebarControls.tsx` to implement the two-step wizard UI.
+- [ ] Increase max dimensions to 96x96 in `SidebarControls.tsx`.
+- [ ] Test the wizard flow and dimension changes.
