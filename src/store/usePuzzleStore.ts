@@ -23,6 +23,8 @@ export interface PuzzleState {
   setConnectorHoleDiameter: (d: number) => void;
   connectorHoleDepth: number;
   setConnectorHoleDepth: (d: number) => void;
+  holePlacement: 'corners' | 'dense';
+  setHolePlacement: (p: 'corners' | 'dense') => void;
   
   cropRatio: CropRatio;
   setCropRatio: (r: CropRatio) => void;
@@ -94,6 +96,8 @@ export const usePuzzleStore = create<PuzzleState>()(
       setConnectorHoleDiameter: (connectorHoleDiameter) => set({ connectorHoleDiameter }),
       connectorHoleDepth: 8.5,
       setConnectorHoleDepth: (connectorHoleDepth) => set({ connectorHoleDepth }),
+      holePlacement: 'corners',
+      setHolePlacement: (holePlacement) => set({ holePlacement }),
       cropRatio: CROP_RATIOS[0], // default 1:1
       setCropRatio: (cropRatio) => set({ cropRatio }),
       basePlateSize: 16,

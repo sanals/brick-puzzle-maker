@@ -1,0 +1,28 @@
+Viewed geometry-generators.ts:1-370
+Viewed exporters.ts:1-800
+
+Based on the current implementation in `pixel-puzzle-maker_2`, here is exactly how the baseplate (tray) is generated, split, and structured.
+
+### 1. Using Pre-Modeled STLs (Not generated from scratch)
+Currently, the application does not generate the baseplate math from primitive shapes. Instead, it relies on loading pre-modeled, static physical CAD assets. 
+- Depending on the selected grid configuration, it dynamically loads either `base_16_x_16.stl` or `base_24_x_24.stl` to serve as the master geometry for the board. 
+- **Code Reference:** [lib/geometry-generators.ts:L35-L40](file:///c:/dev/projects/pixel-puzzle-maker_2/lib/geometry-generators.ts#L35-L40)
+
+### 2. Splitting Large Boards into a Grid of Master Trays
+If a user creates a puzzle layout that exceeds the size of a single master STL (e.g., they want a 32x32 puzzle but the master tray is only 16x16), the engine mathematically "splits" the total board area into a grid of smaller trays.
+- It calculates `numBoardsX` and `numBoardsZ` by dividing the total requested puzzle dimensions by the static `TRAY_SIZE`. 
+- It then uses an `InstancedMesh` to render identical clones of the master STL, calculating precise X and Z translations for each clone so they sit perfectly flush next to each other.
+- **Code Reference:** [lib/geometry-generators.ts:L232-L269](file:///c:/dev/projects/pixel-puzzle-maker_2/lib/geometry-generators.ts#L232-L269)
+
+### 3. Dynamic CSG (Constructive Solid Geometry) for Text Embossing
+While the baseplate starts as a static STL, it is modified dynamically during the export process if the user has requested text labels (like color codes) to be printed on the board.
+- The system generates 3D text geometry (`TextGeometry`) for all the labels.
+- Using `three-bvh-csg` (`Brush` and `Evaluator`), it performs a boolean `ADDITION` (for raised text) or `SUBTRACTION` (for debossed text) to permanently merge the text meshes directly into the baseplate STL geometry. 
+- This creates a monolithic, solid mesh so slicers don't scatter the text across the build plate.
+- **Code Reference:** [lib/exporters.ts:L140-L167](file:///c:/dev/projects/pixel-puzzle-maker_2/lib/exporters.ts#L140-L167)
+
+### 4. Exporting as Split Components
+When preparing the final manufacturing files (3MF or ZIP), the large grid isn't exported as one giant mesh. 
+- The exporter loops through the calculated `numBoardsX` and `numBoardsZ` grid and pushes each individual tray section as its own isolated object (named `Board_1_1`, `Board_1_2`, etc.). 
+- This ensures that users with standard 256mm 3D printers can print massive boards one chunk at a time.
+- **Code Reference:** [lib/exporters.ts:L120-L176](file:///c:/dev/projects/pixel-puzzle-maker_2/lib/exporters.ts#L120-L176)

@@ -69,7 +69,8 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     baseChunkSize,
     borderWidth,
     connectorHoleDiameter,
-    connectorHoleDepth
+    connectorHoleDepth,
+    holePlacement
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
   const [hoverAction, setHoverAction] = useState<{
@@ -104,7 +105,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       const gen = new BaseplateGenerator(
         totalWidth, totalLength, tolerances.snapFit, 1, passMatrix ? voxelMatrix : null,
         true, true, true, true,
-        connectorHoleDiameter, connectorHoleDepth
+        connectorHoleDiameter, connectorHoleDepth, false, holePlacement
       );
       chunks.push({ geometry: gen.generateGeometry(), position: [0, 0, 0] as [number, number, number] });
     } else {
@@ -125,7 +126,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           const gen = new BaseplateGenerator(
             chunkW, chunkL, tolerances.snapFit, 1, null, 
             true, true, true, true,
-            connectorHoleDiameter, connectorHoleDepth
+            connectorHoleDiameter, connectorHoleDepth, false, holePlacement
           );
           const geom = gen.generateGeometry();
           
@@ -144,7 +145,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     }
     
     return chunks;
-  }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth]);
+  }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement]);
 
   const instancedBricks = useMemo(() => {
     const tolerances = calculateTolerances(materialProfile, snapFit);

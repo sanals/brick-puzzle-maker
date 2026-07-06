@@ -26,6 +26,7 @@ export class BaseplateGenerator {
   public connectorHoleDiameter: number;
   public connectorHoleDepth: number;
   public isExport: boolean;
+  public holePlacement: 'corners' | 'dense';
 
   constructor(
     width: number, 
@@ -39,7 +40,8 @@ export class BaseplateGenerator {
     hasBottomHoles: boolean = false,
     connectorHoleDiameter: number = 5.1,
     connectorHoleDepth: number = 8.5,
-    isExport: boolean = false
+    isExport: boolean = false,
+    holePlacement: 'corners' | 'dense' = 'corners'
   ) {
     this.width = width;
     this.length = length;
@@ -53,6 +55,7 @@ export class BaseplateGenerator {
     this.connectorHoleDiameter = connectorHoleDiameter;
     this.connectorHoleDepth = connectorHoleDepth;
     this.isExport = isExport;
+    this.holePlacement = holePlacement;
   }
 
   /**
@@ -168,15 +171,24 @@ export class BaseplateGenerator {
       ) => {
         const holeIndices = new Set<number>();
         
-        // Lego Math dictates that perfectly symmetric 8-stud repeating grids 
-        // are impossible on most board sizes. 
-        // The most foolproof and standard way to guarantee any two boards 
-        // can connect flush at their corners is to place exactly two holes per edge, 
-        // anchored a fixed distance from the corners.
-        // We place them at the 5th stud from the corner (index 4).
-        if (lengthStuds >= 12) {
-          holeIndices.add(4);
-          holeIndices.add(lengthStuds - 1 - 4);
+        if (this.holePlacement === 'dense') {
+          // Dense mode: Holes every 4 studs, placed exactly halfway between studs.
+          // This starts at index 3.5 (between 4th and 5th stud) and repeats.
+          // It perfectly aligns across baseplate chunks because 3.5 is symmetric!
+          for (let i = 3.5; i < lengthStuds - 3; i += 4) {
+            holeIndices.add(i);
+          }
+        } else {
+          // Lego Math dictates that perfectly symmetric 8-stud repeating grids 
+          // are impossible on most board sizes. 
+          // The most foolproof and standard way to guarantee any two boards 
+          // can connect flush at their corners is to place exactly two holes per edge, 
+          // anchored a fixed distance from the corners.
+          // We place them at the 5th stud from the corner (index 4).
+          if (lengthStuds >= 12) {
+            holeIndices.add(4);
+            holeIndices.add(lengthStuds - 1 - 4);
+          }
         }
 
         Array.from(holeIndices).forEach(i => {

@@ -21,7 +21,8 @@ export async function exportMosaicBatches(
   baseChunkSize: number = 0,
   borderWidth: number = 0,
   connectorHoleDiameter: number = 5.1,
-  connectorHoleDepth: number = 8.5
+  connectorHoleDepth: number = 8.5,
+  holePlacement: 'corners' | 'dense' = 'corners'
 ): Promise<Blob> {
   const zip = new JSZip();
 
@@ -34,7 +35,7 @@ export async function exportMosaicBatches(
       totalWidth, totalLength, tolerances, 1, null,
       true, true, true, true,
       connectorHoleDiameter, connectorHoleDepth,
-      true // isExport
+      true, holePlacement
     );
     const baseGeo = baseGen.generateGeometry();
     const baseBlob = await build3MF(baseGeo, '#3b82f6');
@@ -52,7 +53,7 @@ export async function exportMosaicBatches(
           chunkW, chunkL, tolerances, 1, null, 
           true, true, true, true,
           connectorHoleDiameter, connectorHoleDepth,
-          true // isExport
+          true, holePlacement
         );
         const baseGeo = gen.generateGeometry();
         const baseBlob = await build3MF(baseGeo, '#3b82f6');

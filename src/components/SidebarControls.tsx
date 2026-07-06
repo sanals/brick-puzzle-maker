@@ -30,6 +30,7 @@ export function SidebarControls() {
     allowNonStandardSizes, setAllowNonStandardSizes,
     connectorHoleDiameter, setConnectorHoleDiameter,
     connectorHoleDepth, setConnectorHoleDepth,
+    holePlacement, setHolePlacement,
     showBaseplate, setShowBaseplate,
     showBricks, setShowBricks,
     baseChunkSize, setBaseChunkSize,
@@ -159,7 +160,7 @@ export function SidebarControls() {
           }
         }
         
-        blob = await exportMosaicBatches(width, length, tolerances.snapFit, voxelMatrix, optimizedBricks, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth);
+        blob = await exportMosaicBatches(width, length, tolerances.snapFit, voxelMatrix, optimizedBricks, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -169,7 +170,7 @@ export function SidebarControls() {
       } else {
         // Heightmap Mode
         if (width > 16 || length > 16) {
-          blob = await exportChunkedBaseplates(width, length, tolerances.snapFit, voxelMatrix, 16, connectorHoleDiameter, connectorHoleDepth);
+          blob = await exportChunkedBaseplates(width, length, tolerances.snapFit, voxelMatrix, 16, connectorHoleDiameter, connectorHoleDepth, holePlacement);
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -181,7 +182,7 @@ export function SidebarControls() {
           const gen = new BaseplateGenerator(
             width, length, tolerances.snapFit, 1.0, voxelMatrix,
             false, false, false, false,
-            connectorHoleDiameter, connectorHoleDepth
+            connectorHoleDiameter, connectorHoleDepth, false, holePlacement
           );
           const geo = gen.generateGeometry();
           blob = await build3MF(geo);
@@ -409,6 +410,64 @@ export function SidebarControls() {
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          <hr className="border-zinc-800" />
+
+          {/* Baseplate Settings */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Baseplate Technic Settings</h3>
+            
+            <div className="space-y-2">
+              <label className="flex justify-between text-sm items-center">
+                <span>Technic Hole Placement</span>
+              </label>
+              <select
+                value={holePlacement}
+                onChange={(e) => setHolePlacement(e.target.value as 'corners' | 'dense')}
+                className="w-full bg-zinc-900 border border-zinc-700 text-white rounded p-2 text-sm focus:outline-none focus:border-blue-500"
+              >
+                <option value="corners">Corner Anchors (2 per edge)</option>
+                <option value="dense">Dense Grid (Every 4 studs)</option>
+              </select>
+              <p className="text-[10px] text-zinc-500 leading-tight">
+                Corner Anchors place one hole 5 studs from each corner. Dense Grid places holes exactly between studs at 4-stud intervals.
+              </p>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="flex justify-between text-sm items-center">
+                <span>Technic Hole Diameter</span>
+                <span className="text-blue-400 font-mono">{connectorHoleDiameter.toFixed(1)}mm</span>
+              </label>
+              <input
+                type="range"
+                min={4.5}
+                max={6.0}
+                step={0.1}
+                value={connectorHoleDiameter}
+                onChange={(e) => setConnectorHoleDiameter(Number(e.target.value))}
+                className="w-full accent-blue-500"
+              />
+              <p className="text-[10px] text-zinc-500 leading-tight">Increase if standard pins fit too tightly. 5.1mm is default for FDM.</p>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="flex justify-between text-sm items-center">
+                <span>Technic Hole Depth</span>
+                <span className="text-blue-400 font-mono">{connectorHoleDepth.toFixed(1)}mm</span>
+              </label>
+              <input
+                type="range"
+                min={4.0}
+                max={12.0}
+                step={0.5}
+                value={connectorHoleDepth}
+                onChange={(e) => setConnectorHoleDepth(Number(e.target.value))}
+                className="w-full accent-blue-500"
+              />
+              <p className="text-[10px] text-zinc-500 leading-tight">Depth of the hole into the baseplate block. 8.5mm fits a standard pin half.</p>
             </div>
           </div>
 
@@ -720,40 +779,6 @@ export function SidebarControls() {
                 onChange={(e) => setSnapFit(Number(e.target.value))}
                 className="w-full accent-blue-500"
               />
-            </div>
-            
-            <div className="space-y-2">
-              <label className="flex justify-between text-sm items-center">
-                <span>Technic Hole Diameter</span>
-                <span className="text-blue-400 font-mono">{connectorHoleDiameter.toFixed(1)}mm</span>
-              </label>
-              <input
-                type="range"
-                min={4.5}
-                max={6.0}
-                step={0.1}
-                value={connectorHoleDiameter}
-                onChange={(e) => setConnectorHoleDiameter(Number(e.target.value))}
-                className="w-full accent-blue-500"
-              />
-              <p className="text-[10px] text-zinc-500 leading-tight">Increase if standard pins fit too tightly. 5.1mm is default for FDM.</p>
-            </div>
-            
-            <div className="space-y-2">
-              <label className="flex justify-between text-sm items-center">
-                <span>Technic Hole Depth</span>
-                <span className="text-blue-400 font-mono">{connectorHoleDepth.toFixed(1)}mm</span>
-              </label>
-              <input
-                type="range"
-                min={4.0}
-                max={12.0}
-                step={0.5}
-                value={connectorHoleDepth}
-                onChange={(e) => setConnectorHoleDepth(Number(e.target.value))}
-                className="w-full accent-blue-500"
-              />
-              <p className="text-[10px] text-zinc-500 leading-tight">Depth of the hole into the baseplate block. 8.5mm fits a standard pin half.</p>
             </div>
           </div>
 

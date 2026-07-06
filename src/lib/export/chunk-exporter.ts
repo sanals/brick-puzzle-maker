@@ -15,7 +15,8 @@ export async function exportChunkedBaseplates(
   voxelMatrix: VoxelMatrix | null,
   chunkSize = 16,
   connectorHoleDiameter: number = 5.1,
-  connectorHoleDepth: number = 8.5
+  connectorHoleDepth: number = 8.5,
+  holePlacement: 'corners' | 'dense' = 'corners'
 ): Promise<Blob> {
   const zip = new JSZip();
 
@@ -59,7 +60,8 @@ export async function exportChunkedBaseplates(
         true,
         connectorHoleDiameter,
         connectorHoleDepth,
-        true // isExport
+        true, // isExport
+        holePlacement
       );
       let geometry = generator.generateGeometry();
 
