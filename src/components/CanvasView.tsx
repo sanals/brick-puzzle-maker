@@ -71,7 +71,12 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     connectorHoleDiameter,
     connectorHoleDepth,
     holePlacement,
-    cameraResetTrigger
+    cameraResetTrigger,
+    activeEditChunk,
+    setActiveEditChunk,
+    skipSplitPrompt,
+    setSkipSplitPrompt,
+    setFacesCount
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
 
@@ -132,6 +137,11 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           const chunkW = (x === numX - 1 && totalWidth % baseChunkSize !== 0) ? totalWidth % baseChunkSize : baseChunkSize;
           const chunkL = (z === numZ - 1 && totalLength % baseChunkSize !== 0) ? totalLength % baseChunkSize : baseChunkSize;
           
+          const chunkGridStartX = x * baseChunkSize;
+          const chunkGridStartZ = z * baseChunkSize;
+
+
+          
           const gen = new BaseplateGenerator(
             chunkW, chunkL, tolerances.snapFit, 1, null, 
             true, true, true, true,
@@ -148,7 +158,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           const cx = chunkStartX + chunkOverallW / 2;
           const cz = chunkStartZ + chunkOverallL / 2;
           
-          chunks.push({ geometry: geom, position: [cx, 0, cz] as [number, number, number] });
+          chunks.push({ geometry: geom, position: [cx, 0, cz] as [number, number, number], gridX: chunkGridStartX, gridZ: chunkGridStartZ, gridW: chunkW, gridL: chunkL });
         }
       }
     }
@@ -156,10 +166,8 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     return chunks;
   }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement]);
 
-  const instancedBricks = useMemo(() => {
-    const tolerances = calculateTolerances(materialProfile, snapFit);
+  const allOptimizedBricks = useMemo(() => {
     const isHeightmap = voxelMatrix?.cells[0]?.[0]?.height !== undefined;
-    let instancedGroups = null;
 
     // Generate separate bricks if it's a mosaic
     if (voxelMatrix && !isHeightmap) {
@@ -183,10 +191,29 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           }
         }
       }
+      return optimizedBricks;
+    }
+    return null;
+  }, [width, length, voxelMatrix, customBricks, optimizePieces, allowNonStandardSizes]);
 
-      // Group by WxL
-      const groups = new Map<string, OptimizedBrick[]>();
-      for (const brick of optimizedBricks) {
+  const instancedBricks = useMemo(() => {
+    if (!allOptimizedBricks) return null;
+    const tolerances = calculateTolerances(materialProfile, snapFit);
+    let instancedGroups = null;
+
+    let optimizedBricks = allOptimizedBricks;
+    if (activeEditChunk) {
+      optimizedBricks = optimizedBricks.filter(brick => {
+        return brick.x < activeEditChunk.startX + activeEditChunk.width && 
+               brick.x + brick.width > activeEditChunk.startX &&
+               brick.z < activeEditChunk.startZ + activeEditChunk.length && 
+               brick.z + brick.length > activeEditChunk.startZ;
+      });
+    }
+
+    // Group by WxL
+    const groups = new Map<string, OptimizedBrick[]>();
+    for (const brick of optimizedBricks) {
          const key = `${brick.width}x${brick.length}`;
          if (!groups.has(key)) groups.set(key, []);
          groups.get(key)!.push(brick);
@@ -249,10 +276,9 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
             colors: colorArray
          });
       }
-    }
 
     return instancedGroups;
-  }, [width, length, materialProfile, snapFit, voxelMatrix, customBricks, optimizePieces, allowNonStandardSizes, borderWidth]);
+  }, [width, length, materialProfile, snapFit, allOptimizedBricks, activeEditChunk, borderWidth]);
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
     // Let OrbitControls handle mouse down for rotation/panning.
@@ -286,14 +312,14 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       } else {
         setHoverAction(null);
       }
-    } else {
-      setHoverAction(null);
     }
   };
 
   const handlePointerUp = (e?: ThreeEvent<PointerEvent>) => {
     // Nothing needed
   };
+
+
 
   const getGridCoords = (point: THREE.Vector3) => {
     const wallPlay = 0.2;
@@ -472,6 +498,37 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     }
   };
 
+  const maxPlatesX = baseChunkSize === 16 ? 4 : 3; // Max 64 for 16, 72 for 24
+  const maxPlatesZ = baseChunkSize === 16 ? 4 : 3;
+
+  const totalPlatesX = Math.ceil(width / baseChunkSize);
+  const totalPlatesZ = Math.ceil(length / baseChunkSize);
+
+  const numChunksX = Math.ceil(totalPlatesX / maxPlatesX);
+  const numChunksZ = Math.ceil(totalPlatesZ / maxPlatesZ);
+
+  const platesPerChunkX = Math.ceil(totalPlatesX / numChunksX);
+  const platesPerChunkZ = Math.ceil(totalPlatesZ / numChunksZ);
+
+  const editChunkW = platesPerChunkX * baseChunkSize;
+  const editChunkL = platesPerChunkZ * baseChunkSize;
+
+  const isLargePuzzle = numChunksX > 1 || numChunksZ > 1;
+
+  useEffect(() => {
+    const faces1 = baseplateChunks ? baseplateChunks.reduce((acc, chunk) => {
+      const faces = chunk.geometry.index ? chunk.geometry.index.count / 3 : chunk.geometry.attributes.position.count / 3;
+      return acc + faces;
+    }, 0) : 0;
+    
+    const faces2 = instancedBricks ? instancedBricks.reduce((acc, group) => {
+      const faces = group.geometry.index ? group.geometry.index.count / 3 : group.geometry.attributes.position.count / 3;
+      return acc + (faces * group.count);
+    }, 0) : 0;
+
+    setFacesCount(faces1 + faces2);
+  }, [baseplateChunks, instancedBricks, setFacesCount]);
+
   return (
     <div 
       className="flex-1 h-screen bg-zinc-950 relative"
@@ -496,7 +553,18 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         <Environment preset="city" />
 
         {/* Baseplate Mesh */}
-        {showBaseplate && baseplateChunks.map((chunk, index) => (
+        {showBaseplate && baseplateChunks.filter(chunk => {
+          if (!activeEditChunk) return true;
+          if (
+            chunk.gridX >= activeEditChunk.startX + activeEditChunk.width ||
+            chunk.gridX + chunk.gridW <= activeEditChunk.startX ||
+            chunk.gridZ >= activeEditChunk.startZ + activeEditChunk.length ||
+            chunk.gridZ + chunk.gridL <= activeEditChunk.startZ
+          ) {
+            return false;
+          }
+          return true;
+        }).map((chunk, index) => (
           <mesh 
             key={index} 
             geometry={chunk.geometry} 
@@ -629,19 +697,76 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         />
       </Canvas>
       
-      {/* Temporary Stats UI overlay (for performance metrics in the future) */}
-      <div className="absolute top-4 right-4 bg-black/50 backdrop-blur text-xs text-white p-2 rounded pointer-events-none">
-        <div>Faces: {
-          (baseplateChunks ? baseplateChunks.reduce((acc, chunk) => {
-            const faces = chunk.geometry.index ? chunk.geometry.index.count / 3 : chunk.geometry.attributes.position.count / 3;
-            return acc + faces;
-          }, 0) : 0) + 
-          (instancedBricks ? instancedBricks.reduce((acc, group) => {
-            const faces = group.geometry.index ? group.geometry.index.count / 3 : group.geometry.attributes.position.count / 3;
-            return acc + (faces * group.count);
-          }, 0) : 0)
-        }</div>
-      </div>
+      {/* Large Puzzle Split Prompt */}
+      {!skipSplitPrompt && !activeEditChunk && isLargePuzzle && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-20">
+          <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-xl shadow-2xl max-w-md text-center space-y-4">
+            <h3 className="text-lg font-bold text-white">Large Puzzle Detected</h3>
+            <p className="text-zinc-400 text-sm">
+              This puzzle is quite large ({width}x{length}). To improve performance and make editing easier, we recommend splitting the workspace into manageable chunks.
+            </p>
+            <div className="flex gap-3 justify-center pt-2">
+              <button 
+                onClick={() => setSkipSplitPrompt(true)}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded text-sm transition-colors"
+              >
+                Keep Full View
+              </button>
+              <button 
+                onClick={() => {
+                  setActiveEditChunk({ startX: 0, startZ: 0, width: editChunkW, length: editChunkL });
+                  setSkipSplitPrompt(true);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-colors shadow-lg"
+              >
+                Split Workspace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Minimap Overlay */}
+      {activeEditChunk && (
+        <div className="absolute top-4 right-4 bg-zinc-900/90 backdrop-blur-md border border-zinc-700 p-2 rounded-lg shadow-2xl z-10 flex flex-col gap-1">
+          <div className="text-xs font-bold text-zinc-400 mb-1 px-1 flex justify-between items-center">
+            Chunk Navigator
+            <button 
+              onClick={() => setActiveEditChunk(null)}
+              className="text-zinc-500 hover:text-white"
+            >
+              Exit
+            </button>
+          </div>
+          <div 
+            className="grid gap-0.5" 
+            style={{ gridTemplateColumns: `repeat(${numChunksX}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: numChunksZ }).map((_, z) => (
+              Array.from({ length: numChunksX }).map((_, x) => {
+                const isActive = activeEditChunk.startX === x * editChunkW && activeEditChunk.startZ === z * editChunkL;
+                return (
+                  <button
+                    key={`${x}-${z}`}
+                    onClick={() => setActiveEditChunk({
+                      startX: x * editChunkW,
+                      startZ: z * editChunkL,
+                      width: editChunkW,
+                      length: editChunkL
+                    })}
+                    className={`w-8 h-8 rounded-sm border ${
+                      isActive 
+                        ? 'bg-blue-500/50 border-blue-400' 
+                        : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700'
+                    } transition-colors`}
+                    title={`Chunk ${x+1},${z+1}`}
+                  />
+                );
+              })
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

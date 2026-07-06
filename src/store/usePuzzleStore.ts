@@ -40,6 +40,16 @@ export interface PuzzleState {
   originalVoxelMatrix: VoxelMatrix | null;
   activePaintColor: PaletteColor | null;
 
+  // Split View & Map View
+  viewMode: '3d' | 'map';
+  setViewMode: (mode: '3d' | 'map') => void;
+  activeEditChunk: { startX: number; startZ: number; width: number; length: number } | null;
+  setActiveEditChunk: (chunk: { startX: number; startZ: number; width: number; length: number } | null) => void;
+  skipSplitPrompt: boolean;
+  setSkipSplitPrompt: (skip: boolean) => void;
+  facesCount: number;
+  setFacesCount: (count: number) => void;
+
   // History for Undo/Redo
   history: VoxelMatrix[];
   historyIndex: number;
@@ -110,6 +120,14 @@ export const usePuzzleStore = create<PuzzleState>()(
       voxelMatrix: null,
       originalVoxelMatrix: null,
       activePaintColor: null,
+      viewMode: '3d',
+      setViewMode: (mode) => set({ viewMode: mode }),
+      activeEditChunk: null,
+      setActiveEditChunk: (chunk) => set({ activeEditChunk: chunk }),
+      skipSplitPrompt: false,
+      setSkipSplitPrompt: (skip) => set({ skipSplitPrompt: skip }),
+      facesCount: 0,
+      setFacesCount: (count) => set({ facesCount: count }),
       history: [],
       historyIndex: -1,
       paintMode: 'stud',
