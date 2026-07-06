@@ -11,6 +11,16 @@ import { usePuzzleStore, MaterialProfile } from '@/store/usePuzzleStore';
 import * as THREE from 'three';
 import { X, Info } from 'lucide-react';
 
+
+function deserializeGeometry(data: any): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  if (data.position) geometry.setAttribute('position', new THREE.BufferAttribute(data.position, 3));
+  if (data.normal) geometry.setAttribute('normal', new THREE.BufferAttribute(data.normal, 3));
+  if (data.uv) geometry.setAttribute('uv', new THREE.BufferAttribute(data.uv, 2));
+  if (data.index) geometry.setIndex(new THREE.BufferAttribute(data.index, 1));
+  return geometry;
+}
+
 const geometryCache = new Map<string, THREE.BufferGeometry>();
 
 function getCachedGeometry(w: number, l: number, materialProfile: MaterialProfile, snapFit: number, highResMode: boolean) {
@@ -96,6 +106,39 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
 
+  const workerRef = useRef<Worker | null>(null);
+  const [isWorkerBusy, setIsWorkerBusy] = useState(false);
+  const [baseplateChunks, setBaseplateChunks] = useState<any[]>([]);
+  const [instancedGroups, setInstancedGroups] = useState<any[]>([]);
+  const workerCallbackRef = useRef<Record<string, Function>>({});
+
+  useEffect(() => {
+    workerRef.current = new Worker(new URL('../workers/geometry.worker.ts', import.meta.url));
+    
+    workerRef.current.onmessage = (e) => {
+      const { type, id, data, error } = e.data;
+      if (error) {
+        console.error("Worker error:", error);
+        setIsWorkerBusy(false);
+        return;
+      }
+      
+      if (workerCallbackRef.current[id]) {
+        workerCallbackRef.current[id](data);
+        delete workerCallbackRef.current[id];
+      }
+      
+      if (Object.keys(workerCallbackRef.current).length === 0) {
+        setIsWorkerBusy(false);
+      }
+    };
+    
+    return () => {
+      workerRef.current?.terminate();
+    };
+  }, []);
+
+
   // Reset camera when triggered
   useEffect(() => {
     if (cameraResetTrigger > 0 && controlsRef.current) {
@@ -129,76 +172,82 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
   } | null>(null);
 
   // Memoize the geometry generation for baseplates
-  const baseplateChunks = useMemo(() => {
+  
+  useEffect(() => {
     const tolerances = calculateTolerances(materialProfile, snapFit);
     const isHeightmap = voxelMatrix?.cells[0]?.[0]?.height !== undefined;
     
     const totalWidth = width + 2 * borderWidth;
     const totalLength = length + 2 * borderWidth;
-    
-    // If it's a heightmap AND there's no splitting/border, we can pass the matrix.
-    // Otherwise, we just generate flat baseplates for mosaics.
     const passMatrix = isHeightmap && baseChunkSize === 0 && borderWidth === 0;
 
-    const chunks = [];
+    let chunkDefs: any[] = [];
     
     if (baseChunkSize === 0) {
-      const gen = new BaseplateGenerator(
-        totalWidth, totalLength, tolerances.snapFit, 1, passMatrix ? voxelMatrix : null,
-        true, true, true, true,
-        connectorHoleDiameter, connectorHoleDepth, false, holePlacement
-      );
-      chunks.push({ 
-        geometry: gen.generateGeometry(), 
-        position: [0, 0, 0] as [number, number, number],
-        gridX: 0,
-        gridZ: 0,
-        gridW: totalWidth,
-        gridL: totalLength
+      chunkDefs.push({ 
+        gridX: 0, gridZ: 0, gridW: totalWidth, gridL: totalLength,
+        passMatrix, isHeightmap, voxelMatrix
       });
     } else {
       const numX = Math.ceil(totalWidth / baseChunkSize);
       const numZ = Math.ceil(totalLength / baseChunkSize);
       
+      for (let x = 0; x < numX; x++) {
+        for (let z = 0; z < numZ; z++) {
+          const chunkW = (x === numX - 1 && totalWidth % baseChunkSize !== 0) ? totalWidth % baseChunkSize : baseChunkSize;
+          const chunkL = (z === numZ - 1 && totalLength % baseChunkSize !== 0) ? totalLength % baseChunkSize : baseChunkSize;
+          const chunkGridStartX = x * baseChunkSize;
+          const chunkGridStartZ = z * baseChunkSize;
+          chunkDefs.push({ gridX: chunkGridStartX, gridZ: chunkGridStartZ, gridW: chunkW, gridL: chunkL });
+        }
+      }
+    }
+
+    const id = `baseplates_${Date.now()}`;
+    setIsWorkerBusy(true);
+    
+    workerCallbackRef.current[id] = (data: any[]) => {
       const wallPlay = 0.2;
       const overallTotalWidth = totalWidth * STUD_PITCH - wallPlay;
       const overallTotalLength = totalLength * STUD_PITCH - wallPlay;
       const startX = -overallTotalWidth / 2;
       const startZ = -overallTotalLength / 2;
 
-      for (let x = 0; x < numX; x++) {
-        for (let z = 0; z < numZ; z++) {
-          const chunkW = (x === numX - 1 && totalWidth % baseChunkSize !== 0) ? totalWidth % baseChunkSize : baseChunkSize;
-          const chunkL = (z === numZ - 1 && totalLength % baseChunkSize !== 0) ? totalLength % baseChunkSize : baseChunkSize;
-          
-          const chunkGridStartX = x * baseChunkSize;
-          const chunkGridStartZ = z * baseChunkSize;
-
-
-          
-          const gen = new BaseplateGenerator(
-            chunkW, chunkL, tolerances.snapFit, 1, null, 
-            true, true, true, true,
-            connectorHoleDiameter, connectorHoleDepth, false, holePlacement
-          );
-          const geom = gen.generateGeometry();
-          
-          const chunkOverallW = chunkW * STUD_PITCH - wallPlay;
-          const chunkOverallL = chunkL * STUD_PITCH - wallPlay;
-          
-          const chunkStartX = startX + (x * baseChunkSize * STUD_PITCH);
-          const chunkStartZ = startZ + (z * baseChunkSize * STUD_PITCH);
-          
-          const cx = chunkStartX + chunkOverallW / 2;
-          const cz = chunkStartZ + chunkOverallL / 2;
-          
-          chunks.push({ geometry: geom, position: [cx, 0, cz] as [number, number, number], gridX: chunkGridStartX, gridZ: chunkGridStartZ, gridW: chunkW, gridL: chunkL });
+      const finalizedChunks = chunkDefs.map((def, idx) => {
+        const geom = deserializeGeometry(data[idx]);
+        let cx = 0, cz = 0;
+        
+        if (baseChunkSize === 0) {
+           cx = 0; cz = 0;
+        } else {
+           const chunkOverallW = def.gridW * STUD_PITCH - wallPlay;
+           const chunkOverallL = def.gridL * STUD_PITCH - wallPlay;
+           
+           // x and z indices can be derived from gridX/gridZ
+           const xIndex = def.gridX / baseChunkSize;
+           const zIndex = def.gridZ / baseChunkSize;
+           
+           const chunkStartX = startX + (xIndex * baseChunkSize * STUD_PITCH);
+           const chunkStartZ = startZ + (zIndex * baseChunkSize * STUD_PITCH);
+           cx = chunkStartX + chunkOverallW / 2;
+           cz = chunkStartZ + chunkOverallL / 2;
         }
+        return { geometry: geom, position: [cx, 0, cz], gridX: def.gridX, gridZ: def.gridZ, gridW: def.gridW, gridL: def.gridL };
+      });
+      
+      setBaseplateChunks(finalizedChunks);
+    };
+
+    workerRef.current?.postMessage({
+      type: 'GENERATE_BASEPLATE_CHUNKS',
+      id,
+      params: {
+        chunks: chunkDefs, tolerances, connectorHoleDiameter, connectorHoleDepth, holePlacement
       }
-    }
-    
-    return chunks;
+    });
+
   }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement]);
+
 
   const deferredVoxelMatrix = useDeferredValue(voxelMatrix);
 
@@ -232,11 +281,14 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     return null;
   }, [width, length, deferredVoxelMatrix, customBricks, optimizePieces, allowNonStandardSizes]);
 
-  const instancedBricks = useMemo(() => {
-    if (!allOptimizedBricks) return null;
-    const tolerances = calculateTolerances(materialProfile, snapFit);
-    let instancedGroups = null;
+  
 
+  useEffect(() => {
+    if (!allOptimizedBricks) {
+      setInstancedGroups([]);
+      return;
+    }
+    
     let optimizedBricks = allOptimizedBricks;
     if (activeEditChunk) {
       optimizedBricks = optimizedBricks.filter(brick => {
@@ -247,64 +299,81 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       });
     }
 
-    // Group by WxL
-    const groups = new Map<string, OptimizedBrick[]>();
+    const groups = new Map<string, any[]>();
     for (const brick of optimizedBricks) {
          const key = `${brick.width}x${brick.length}`;
          if (!groups.has(key)) groups.set(key, []);
          groups.get(key)!.push(brick);
-      }
+    }
+    
+    const sizesToGenerate = Array.from(groups.keys())
+      .filter(key => !geometryCache.has(`${key}-${materialProfile}-${snapFit}-${highResMode}`))
+      .map(k => k.split('x').map(Number));
 
+    const buildInstancedGroups = () => {
       const wallPlay = 0.2;
       const totalWidth = width + 2 * borderWidth;
       const totalLength = length + 2 * borderWidth;
-      
       const overallTotalWidth = totalWidth * STUD_PITCH - wallPlay;
       const overallTotalLength = totalLength * STUD_PITCH - wallPlay;
-      
-      // Start position is the top-left of the entire bordered baseplate, PLUS the border width offset
       const startX = -overallTotalWidth / 2 + (STUD_PITCH / 2) - (wallPlay / 2) + (borderWidth * STUD_PITCH);
       const startZ = -overallTotalLength / 2 + (STUD_PITCH / 2) - (wallPlay / 2) + (borderWidth * STUD_PITCH);
 
-      instancedGroups = [];
+      const newInstancedGroups = [];
       const dummy = new THREE.Object3D();
       const color = new THREE.Color();
 
-      for (const [key, bricks] of groups.entries()) {
-         const [w, l] = key.split('x').map(Number);
-         
-         const geometry = getCachedGeometry(w, l, materialProfile, snapFit, highResMode);
+      for (const key of Array.from(groups.keys())) {
+         const bricks = groups.get(key) || [];
+         const cacheKey = `${key}-${materialProfile}-${snapFit}-${highResMode}`;
+         const geometry = geometryCache.get(cacheKey)!;
          
          const matrixArray = new Float32Array(bricks.length * 16);
          const colorArray = new Float32Array(bricks.length * 3);
          
-         bricks.forEach((brick, i) => {
+         bricks.forEach((brick: any, i: number) => {
             const centerX = startX + brick.x * STUD_PITCH + ((brick.width - 1) * STUD_PITCH) / 2;
             const centerZ = startZ + brick.z * STUD_PITCH + ((brick.length - 1) * STUD_PITCH) / 2;
-            
-            if (isNaN(centerX) || isNaN(centerZ)) {
-              console.error(`NaN found in brick coordinates: x=${brick.x}, z=${brick.z}, width=${brick.width}, length=${brick.length}`);
-            }
-
             dummy.position.set(centerX, 9.6, centerZ);
             dummy.updateMatrix();
             dummy.matrix.toArray(matrixArray, i * 16);
-            
             color.set(brick.hexColor);
             color.toArray(colorArray, i * 3);
          });
          
-         instancedGroups.push({
-            key,
-            geometry,
-            count: bricks.length,
-            matrices: matrixArray,
-            colors: colorArray
-         });
+         newInstancedGroups.push({ key, geometry, count: bricks.length, matrices: matrixArray, colors: colorArray });
       }
+      setInstancedGroups(newInstancedGroups);
+    };
+    
+    if (sizesToGenerate.length === 0) {
+      buildInstancedGroups();
+      return;
+    }
 
-    return instancedGroups;
+    const id = `bricks_${Date.now()}`;
+    setIsWorkerBusy(true);
+    
+    workerCallbackRef.current[id] = (data: any[]) => {
+      for (const res of data) {
+         const geometry = deserializeGeometry(res.data);
+         const cacheKey = `${res.key}-${materialProfile}-${snapFit}-${highResMode}`;
+         geometryCache.set(cacheKey, geometry);
+      }
+      buildInstancedGroups();
+    };
+
+    workerRef.current?.postMessage({
+      type: 'GENERATE_BRICKS',
+      id,
+      params: {
+        sizes: sizesToGenerate, materialProfile, snapFit, highResMode
+      }
+    });
+
   }, [width, length, materialProfile, snapFit, allOptimizedBricks, activeEditChunk, borderWidth, highResMode]);
+
+
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
     // Let OrbitControls handle mouse down for rotation/panning.
@@ -547,13 +616,13 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       return acc + faces;
     }, 0) : 0;
     
-    const faces2 = instancedBricks ? instancedBricks.reduce((acc, group) => {
+    const faces2 = instancedGroups ? instancedGroups.reduce((acc, group) => {
       const faces = group.geometry.index ? group.geometry.index.count / 3 : group.geometry.attributes.position.count / 3;
       return acc + (faces * group.count);
     }, 0) : 0;
 
     setFacesCount(faces1 + faces2);
-  }, [baseplateChunks, instancedBricks, setFacesCount]);
+  }, [baseplateChunks, instancedGroups, setFacesCount]);
 
   return (
     <div 
@@ -606,9 +675,9 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         ))}
 
         {/* Instanced Mosaic Bricks Mesh */}
-        {showBricks && instancedBricks && (
+        {showBricks && instancedGroups && instancedGroups.length > 0 && (
           <group position={[0, explodedView ? 5.0 : 0, 0]}>
-            {instancedBricks.map((group) => (
+            {instancedGroups?.map((group) => (
               <BrickGroup key={group.key} group={group} />
             ))}
             {/* Simple Cut/Join Line Preview */}
@@ -748,6 +817,16 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         />
       </Canvas>
       
+      
+      {/* Loading Overlay */}
+      {isWorkerBusy && (
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center z-50 transition-all">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4 shadow-xl shadow-blue-500/20"></div>
+          <div className="text-white font-bold text-lg drop-shadow-md">Generating 3D Geometry...</div>
+          <div className="text-blue-200 text-sm opacity-80 mt-1 drop-shadow-md">Running in background worker</div>
+        </div>
+      )}
+
       {/* Large Puzzle Split Prompt */}
       {!skipSplitPrompt && !activeEditChunk && isLargePuzzle && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-20">
