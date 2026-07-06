@@ -102,7 +102,8 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     setFacesCount,
     highResMode,
     dismissedPreviewBanner,
-    setDismissedPreviewBanner
+    setDismissedPreviewBanner,
+    designType, baseHeightRatio, studlessBorder
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
 
@@ -183,24 +184,67 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
 
     let chunkDefs: any[] = [];
     
-    if (baseChunkSize === 0) {
-      chunkDefs.push({ 
-        gridX: 0, gridZ: 0, gridW: totalWidth, gridL: totalLength,
-        passMatrix, isHeightmap, voxelMatrix
-      });
+    if (baseChunkSize === 0 || (designType === 'normal' || borderWidth === 0)) {
+      // Normal logic: Everything is one big grid
+      if (baseChunkSize === 0) {
+        chunkDefs.push({ 
+          gridX: 0, gridZ: 0, gridW: totalWidth, gridL: totalLength,
+          passMatrix, isHeightmap, voxelMatrix, partType: 'main'
+        });
+      } else {
+        const numX = Math.ceil(totalWidth / baseChunkSize);
+        const numZ = Math.ceil(totalLength / baseChunkSize);
+        
+        for (let x = 0; x < numX; x++) {
+          for (let z = 0; z < numZ; z++) {
+            const chunkW = (x === numX - 1 && totalWidth % baseChunkSize !== 0) ? totalWidth % baseChunkSize : baseChunkSize;
+            const chunkL = (z === numZ - 1 && totalLength % baseChunkSize !== 0) ? totalLength % baseChunkSize : baseChunkSize;
+            const chunkGridStartX = x * baseChunkSize;
+            const chunkGridStartZ = z * baseChunkSize;
+            chunkDefs.push({ gridX: chunkGridStartX, gridZ: chunkGridStartZ, gridW: chunkW, gridL: chunkL, partType: 'main' });
+          }
+        }
+      }
     } else {
-      const numX = Math.ceil(totalWidth / baseChunkSize);
-      const numZ = Math.ceil(totalLength / baseChunkSize);
+      // Frame logic with detached borders
+      // 1. Main Grid (spans 0 to width, 0 to length)
+      const numX = Math.ceil(width / baseChunkSize);
+      const numZ = Math.ceil(length / baseChunkSize);
       
       for (let x = 0; x < numX; x++) {
         for (let z = 0; z < numZ; z++) {
-          const chunkW = (x === numX - 1 && totalWidth % baseChunkSize !== 0) ? totalWidth % baseChunkSize : baseChunkSize;
-          const chunkL = (z === numZ - 1 && totalLength % baseChunkSize !== 0) ? totalLength % baseChunkSize : baseChunkSize;
+          const chunkW = (x === numX - 1 && width % baseChunkSize !== 0) ? width % baseChunkSize : baseChunkSize;
+          const chunkL = (z === numZ - 1 && length % baseChunkSize !== 0) ? length % baseChunkSize : baseChunkSize;
           const chunkGridStartX = x * baseChunkSize;
           const chunkGridStartZ = z * baseChunkSize;
-          chunkDefs.push({ gridX: chunkGridStartX, gridZ: chunkGridStartZ, gridW: chunkW, gridL: chunkL });
+          chunkDefs.push({ gridX: chunkGridStartX + borderWidth, gridZ: chunkGridStartZ + borderWidth, gridW: chunkW, gridL: chunkL, partType: 'main', isDetached: true });
         }
       }
+
+      // 2. Borders (chunked identically to main grid along their respective axes)
+      for (let x = 0; x < numX; x++) {
+        const chunkW = (x === numX - 1 && width % baseChunkSize !== 0) ? width % baseChunkSize : baseChunkSize;
+        const chunkGridStartX = x * baseChunkSize;
+        // Top Border
+        chunkDefs.push({ gridX: chunkGridStartX + borderWidth, gridZ: 0, gridW: chunkW, gridL: borderWidth, partType: 'border_top', isDetached: true });
+        // Bottom Border
+        chunkDefs.push({ gridX: chunkGridStartX + borderWidth, gridZ: length + borderWidth, gridW: chunkW, gridL: borderWidth, partType: 'border_bottom', isDetached: true });
+      }
+
+      for (let z = 0; z < numZ; z++) {
+        const chunkL = (z === numZ - 1 && length % baseChunkSize !== 0) ? length % baseChunkSize : baseChunkSize;
+        const chunkGridStartZ = z * baseChunkSize;
+        // Left Border
+        chunkDefs.push({ gridX: 0, gridZ: chunkGridStartZ + borderWidth, gridW: borderWidth, gridL: chunkL, partType: 'border_left', isDetached: true });
+        // Right Border
+        chunkDefs.push({ gridX: width + borderWidth, gridZ: chunkGridStartZ + borderWidth, gridW: borderWidth, gridL: chunkL, partType: 'border_right', isDetached: true });
+      }
+
+      // 3. Corners
+      chunkDefs.push({ gridX: 0, gridZ: 0, gridW: borderWidth, gridL: borderWidth, partType: 'corner_tl', isDetached: true });
+      chunkDefs.push({ gridX: width + borderWidth, gridZ: 0, gridW: borderWidth, gridL: borderWidth, partType: 'corner_tr', isDetached: true });
+      chunkDefs.push({ gridX: 0, gridZ: length + borderWidth, gridW: borderWidth, gridL: borderWidth, partType: 'corner_bl', isDetached: true });
+      chunkDefs.push({ gridX: width + borderWidth, gridZ: length + borderWidth, gridW: borderWidth, gridL: borderWidth, partType: 'corner_br', isDetached: true });
     }
 
     const id = `baseplates_${Date.now()}`;
@@ -217,22 +261,39 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         const geom = deserializeGeometry(data[idx]);
         let cx = 0, cz = 0;
         
-        if (baseChunkSize === 0) {
+        if (baseChunkSize === 0 && def.partType === 'main' && !def.isDetached) {
            cx = 0; cz = 0;
         } else {
            const chunkOverallW = def.gridW * STUD_PITCH - wallPlay;
            const chunkOverallL = def.gridL * STUD_PITCH - wallPlay;
            
-           // x and z indices can be derived from gridX/gridZ
-           const xIndex = def.gridX / baseChunkSize;
-           const zIndex = def.gridZ / baseChunkSize;
-           
-           const chunkStartX = startX + (xIndex * baseChunkSize * STUD_PITCH);
-           const chunkStartZ = startZ + (zIndex * baseChunkSize * STUD_PITCH);
-           cx = chunkStartX + chunkOverallW / 2;
-           cz = chunkStartZ + chunkOverallL / 2;
+           const chunkStartX = startX + (def.gridX * STUD_PITCH);
+           const chunkStartZ = startZ + (def.gridZ * STUD_PITCH);
+
+           // Slightly offset detached border pieces for visual explosion effect so the user can see they are separate
+           let offsetX = 0;
+           let offsetZ = 0;
+           const explosionFactor = 10; // mm
+
+           if (def.isDetached) {
+             if (def.partType === 'border_top' || def.partType === 'corner_tl' || def.partType === 'corner_tr') {
+               offsetZ = -explosionFactor;
+             }
+             if (def.partType === 'border_bottom' || def.partType === 'corner_bl' || def.partType === 'corner_br') {
+               offsetZ = explosionFactor;
+             }
+             if (def.partType === 'border_left' || def.partType === 'corner_tl' || def.partType === 'corner_bl') {
+               offsetX = -explosionFactor;
+             }
+             if (def.partType === 'border_right' || def.partType === 'corner_tr' || def.partType === 'corner_br') {
+               offsetX = explosionFactor;
+             }
+           }
+
+           cx = chunkStartX + chunkOverallW / 2 + offsetX;
+           cz = chunkStartZ + chunkOverallL / 2 + offsetZ;
         }
-        return { geometry: geom, position: [cx, 0, cz], gridX: def.gridX, gridZ: def.gridZ, gridW: def.gridW, gridL: def.gridL };
+        return { geometry: geom, position: [cx, 0, cz], gridX: def.gridX, gridZ: def.gridZ, gridW: def.gridW, gridL: def.gridL, partType: def.partType };
       });
       
       setBaseplateChunks(finalizedChunks);
@@ -242,11 +303,12 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       type: 'GENERATE_BASEPLATE_CHUNKS',
       id,
       params: {
-        chunks: chunkDefs, tolerances, connectorHoleDiameter, connectorHoleDepth, holePlacement
+        chunks: chunkDefs, tolerances, connectorHoleDiameter, connectorHoleDepth, holePlacement,
+        designType, baseHeightRatio, studlessBorder, borderWidth, totalWidth, totalLength
       }
     });
 
-  }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement]);
+  }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement, designType, baseHeightRatio, studlessBorder]);
 
 
   const deferredVoxelMatrix = useDeferredValue(voxelMatrix);

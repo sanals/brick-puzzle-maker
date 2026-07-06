@@ -98,7 +98,7 @@ export async function exportMosaicBatches(
 
     for (const [key, count] of brickTypes.entries()) {
       const [w, l] = key.split('x').map(Number);
-      const gen = new KlemmbrickGenerator(w, l, tolerances, 1/3, true);
+      const gen = new KlemmbrickGenerator(w, l, tolerances, 1/3, true, false);
       const geo = gen.generateGeometry();
       
       const blob = await build3MF(geo, hex);

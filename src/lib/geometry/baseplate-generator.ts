@@ -25,8 +25,17 @@ export class BaseplateGenerator {
   public hasBottomHoles: boolean;
   public connectorHoleDiameter: number;
   public connectorHoleDepth: number;
+
   public isExport: boolean;
   public holePlacement: 'corners' | 'dense';
+  public studlessBorder: boolean;
+  public borderWidth: number;
+  public gridX: number;
+  public gridZ: number;
+  public totalWidth: number;
+  public totalLength: number;
+  public partType: string;
+
 
   constructor(
     width: number, 
@@ -39,9 +48,17 @@ export class BaseplateGenerator {
     hasTopHoles: boolean = false,
     hasBottomHoles: boolean = false,
     connectorHoleDiameter: number = 5.1,
+
     connectorHoleDepth: number = 8.5,
     isExport: boolean = false,
-    holePlacement: 'corners' | 'dense' = 'corners'
+    holePlacement: 'corners' | 'dense' = 'corners',
+    studlessBorder: boolean = false,
+    borderWidth: number = 0,
+    gridX: number = 0,
+    gridZ: number = 0,
+    totalWidth: number = 0,
+    totalLength: number = 0,
+    partType: string = 'main'
   ) {
     this.width = width;
     this.length = length;
@@ -54,8 +71,17 @@ export class BaseplateGenerator {
     this.hasBottomHoles = hasBottomHoles;
     this.connectorHoleDiameter = connectorHoleDiameter;
     this.connectorHoleDepth = connectorHoleDepth;
+
     this.isExport = isExport;
     this.holePlacement = holePlacement;
+    this.studlessBorder = studlessBorder;
+    this.borderWidth = borderWidth;
+    this.gridX = gridX;
+    this.gridZ = gridZ;
+    this.totalWidth = totalWidth;
+    this.totalLength = totalLength;
+    this.partType = partType;
+
   }
 
   /**
@@ -118,8 +144,23 @@ export class BaseplateGenerator {
           geometriesToMerge.push(colGeo);
         }
 
+        // Check if we should skip stud due to studless border
+        let skipStud = false;
+        if (this.studlessBorder && this.borderWidth > 0 && this.totalWidth > 0 && this.totalLength > 0) {
+          const absX = this.gridX + x;
+          const absZ = this.gridZ + z;
+          if (
+            absX < this.borderWidth || 
+            absX >= this.totalWidth - this.borderWidth || 
+            absZ < this.borderWidth || 
+            absZ >= this.totalLength - this.borderWidth
+          ) {
+            skipStud = true;
+          }
+        }
+
         // Create the stud on top
-        if (currentBlockHeight > 0) {
+        if (currentBlockHeight > 0 && !skipStud) {
           const studClone = studGeo.clone();
           studClone.translate(posX, currentBlockHeight, posZ);
 
@@ -172,22 +213,17 @@ export class BaseplateGenerator {
         const holeIndices = new Set<number>();
         
         if (this.holePlacement === 'dense') {
-          // Dense mode: Holes every 4 studs, placed exactly halfway between studs.
-          // This starts at index 3.5 (between 4th and 5th stud) and repeats.
-          // It perfectly aligns across baseplate chunks because 3.5 is symmetric!
           for (let i = 3.5; i < lengthStuds - 3; i += 4) {
             holeIndices.add(i);
           }
         } else {
-          // Lego Math dictates that perfectly symmetric 8-stud repeating grids 
-          // are impossible on most board sizes. 
-          // The most foolproof and standard way to guarantee any two boards 
-          // can connect flush at their corners is to place exactly two holes per edge, 
-          // anchored a fixed distance from the corners.
-          // We place them at the 5th stud from the corner (index 4).
           if (lengthStuds >= 12) {
             holeIndices.add(4);
             holeIndices.add(lengthStuds - 1 - 4);
+          } else if (lengthStuds >= 2) {
+            // For short edges (like 4-stud border connections), place a single centered hole.
+            // (lengthStuds - 1) / 2 is the exact center index.
+            holeIndices.add((lengthStuds - 1) / 2);
           }
         }
 

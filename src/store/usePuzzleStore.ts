@@ -26,6 +26,13 @@ export interface PuzzleState {
   holePlacement: 'corners' | 'dense';
   setHolePlacement: (p: 'corners' | 'dense') => void;
   
+  // Phase 1 Settings
+  designType: 'normal' | 'frame';
+  setDesignType: (type: 'normal' | 'frame') => void;
+  studlessBorder: boolean;
+  setStudlessBorder: (val: boolean) => void;
+  baseHeightRatio: number;
+  setBaseHeightRatio: (val: number) => void;
   cropRatio: CropRatio;
   setCropRatio: (r: CropRatio) => void;
   basePlateSize: BasePlateSize;
@@ -112,9 +119,16 @@ export const usePuzzleStore = create<PuzzleState>()(
       connectorHoleDiameter: 5.1,
       setConnectorHoleDiameter: (connectorHoleDiameter) => set({ connectorHoleDiameter }),
       connectorHoleDepth: 8.5,
-      setConnectorHoleDepth: (connectorHoleDepth) => set({ connectorHoleDepth }),
+      setConnectorHoleDepth: (d) => set({ connectorHoleDepth: d }),
       holePlacement: 'corners',
-      setHolePlacement: (holePlacement) => set({ holePlacement }),
+      setHolePlacement: (p) => set({ holePlacement: p }),
+      
+      designType: 'normal',
+      setDesignType: (type) => set({ designType: type }),
+      studlessBorder: false,
+      setStudlessBorder: (val) => set({ studlessBorder: val }),
+      baseHeightRatio: 0.5, // Thinner base by default for 'normal'
+      setBaseHeightRatio: (val) => set({ baseHeightRatio: val }),
       cropRatio: CROP_RATIOS[0], // default 1:1
       setCropRatio: (cropRatio) => set({ cropRatio }),
       basePlateSize: 16,

@@ -41,6 +41,9 @@ export function SidebarControls() {
     cropRatio, setCropRatio,
     basePlateSize, setBasePlateSize,
     scaleMultiplier, setScaleMultiplier,
+    designType, setDesignType,
+    studlessBorder, setStudlessBorder,
+    baseHeightRatio, setBaseHeightRatio,
     resetModifications
   } = usePuzzleStore();
   
@@ -172,7 +175,7 @@ export function SidebarControls() {
       } else {
         // Heightmap Mode
         if (width > 16 || length > 16) {
-          blob = await exportChunkedBaseplates(width, length, tolerances.snapFit, voxelMatrix, 16, connectorHoleDiameter, connectorHoleDepth, holePlacement);
+          blob = await exportChunkedBaseplates(width, length, tolerances.snapFit, voxelMatrix, 16, connectorHoleDiameter, connectorHoleDepth, holePlacement, designType, baseHeightRatio, studlessBorder, borderWidth);
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -432,6 +435,7 @@ export function SidebarControls() {
           <hr className="border-zinc-800" />
 
           {/* Baseplate Settings */}
+          {designType === 'frame' && (
           <div className="space-y-4">
             <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Baseplate Technic Settings</h3>
             
@@ -486,7 +490,71 @@ export function SidebarControls() {
               <p className="text-[10px] text-zinc-500 leading-tight">Depth of the hole into the baseplate block. 8.5mm fits a standard pin half.</p>
             </div>
           </div>
+          )}
 
+          <hr className="border-zinc-800 my-4" />
+          
+          <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Frame & Design</h3>
+            
+            <div className="space-y-2">
+              <label className="flex justify-between text-sm">
+                <span>Design Type</span>
+              </label>
+              <div className="flex bg-zinc-800 rounded p-1">
+                <button
+                  onClick={() => setDesignType('normal')}
+                  className={`flex-1 text-xs py-1.5 rounded transition-colors ${designType === 'normal' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                >
+                  Normal (Wall)
+                </button>
+                <button
+                  onClick={() => {
+                    setDesignType('frame');
+                    setBaseHeightRatio(1.0); // Force standard thickness for technic holes
+                  }}
+                  className={`flex-1 text-xs py-1.5 rounded transition-colors ${designType === 'frame' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                >
+                  Frame (Modular)
+                </button>
+              </div>
+            </div>
+
+            {designType === 'normal' && (
+              <div className="space-y-2">
+                <label className="flex justify-between text-sm items-center">
+                  <span>Baseplate Thickness</span>
+                  <span className="text-blue-400 font-mono">{(baseHeightRatio * 100).toFixed(0)}%</span>
+                </label>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={1.0}
+                  step={0.1}
+                  value={baseHeightRatio}
+                  onChange={(e) => setBaseHeightRatio(Number(e.target.value))}
+                  className="w-full accent-blue-500"
+                />
+                <p className="text-[10px] text-zinc-500 leading-tight">Reduce thickness to save material for wall-mounted designs.</p>
+              </div>
+            )}
+
+            {borderWidth > 0 && (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  <input 
+                    type="checkbox" 
+                    checked={studlessBorder} 
+                    onChange={(e) => setStudlessBorder(e.target.checked)}
+                    className="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-blue-600"
+                  />
+                  Studless Border
+                </label>
+                <p className="text-[10px] text-zinc-500 ml-6 leading-tight">Removes studs from the outer frame for a clean look.</p>
+              </div>
+            )}
+          </div>
+          
           <hr className="border-zinc-800" />
 
           {/* Setup / Process */}
@@ -495,6 +563,64 @@ export function SidebarControls() {
               <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Generate Puzzle</h3>
             </div>
             
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Frame & Design</h3>
+              
+              <div className="space-y-2">
+                <label className="flex justify-between text-sm">
+                  <span>Design Type</span>
+                </label>
+                <div className="flex bg-zinc-800 rounded p-1">
+                  <button
+                    onClick={() => setDesignType('normal')}
+                    className={`flex-1 text-xs py-1.5 rounded transition-colors ${designType === 'normal' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                  >
+                    Normal (Wall)
+                  </button>
+                  <button
+                    onClick={() => setDesignType('frame')}
+                    className={`flex-1 text-xs py-1.5 rounded transition-colors ${designType === 'frame' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                  >
+                    Frame (Modular)
+                  </button>
+                </div>
+              </div>
+
+              {designType === 'normal' && (
+                <div className="space-y-2">
+                  <label className="flex justify-between text-sm items-center">
+                    <span>Baseplate Thickness</span>
+                    <span className="text-blue-400 font-mono">{(baseHeightRatio * 100).toFixed(0)}%</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={0.2}
+                    max={1.0}
+                    step={0.1}
+                    value={baseHeightRatio}
+                    onChange={(e) => setBaseHeightRatio(Number(e.target.value))}
+                    className="w-full accent-blue-500"
+                  />
+                  <p className="text-[10px] text-zinc-500 leading-tight">Reduce thickness to save material for wall-mounted designs.</p>
+                </div>
+              )}
+
+              {borderWidth > 0 && (
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input 
+                      type="checkbox" 
+                      checked={studlessBorder} 
+                      onChange={(e) => setStudlessBorder(e.target.checked)}
+                      className="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-blue-600"
+                    />
+                    Studless Border
+                  </label>
+                  <p className="text-[10px] text-zinc-500 ml-6 leading-tight">Removes studs from the outer frame for a clean look.</p>
+                </div>
+              )}
+            </div>
+
             <div className="space-y-2">
               <label className="flex justify-between text-sm text-zinc-300">
                 <span>Process Mode</span>

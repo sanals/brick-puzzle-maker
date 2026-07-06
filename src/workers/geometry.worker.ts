@@ -42,15 +42,28 @@ self.onmessage = (event) => {
     }
     
     else if (type === 'GENERATE_BASEPLATE_CHUNKS') {
-      const { chunks, tolerances, connectorHoleDiameter, connectorHoleDepth, holePlacement } = params;
+      const { chunks, tolerances, connectorHoleDiameter, connectorHoleDepth, holePlacement, designType, baseHeightRatio, studlessBorder, borderWidth, totalWidth, totalLength } = params;
       
       const resultChunks = chunks.map((chunkDef: any) => {
         const { gridW, gridL, passMatrix, voxelMatrix } = chunkDef;
         
+        const hasHoles = designType === 'frame';
+        const effectiveBaseHeightRatio = designType === 'frame' ? 1.0 : baseHeightRatio;
+        
+        let hl = hasHoles, hr = hasHoles, ht = hasHoles, hb = hasHoles;
+        if (hasHoles) {
+          // Universal Rule: Holes on all internal seams, but NO holes on the absolute outer perimeter.
+          if (chunkDef.gridX === 0) hl = false;
+          if (chunkDef.gridX + gridW === totalWidth) hr = false;
+          if (chunkDef.gridZ === 0) ht = false;
+          if (chunkDef.gridZ + gridL === totalLength) hb = false;
+        }
+
         const gen = new BaseplateGenerator(
-          gridW, gridL, tolerances.snapFit, 1, passMatrix ? voxelMatrix : null,
-          true, true, true, true,
-          connectorHoleDiameter, connectorHoleDepth, false, holePlacement
+          gridW, gridL, tolerances.snapFit, effectiveBaseHeightRatio, passMatrix ? voxelMatrix : null,
+          hl, hr, ht, hb,
+          connectorHoleDiameter, connectorHoleDepth, false, holePlacement,
+          studlessBorder, borderWidth, chunkDef.gridX, chunkDef.gridZ, totalWidth, totalLength, chunkDef.partType
         );
         
         const geom = gen.generateGeometry();
