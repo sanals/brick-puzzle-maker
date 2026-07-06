@@ -108,17 +108,23 @@ export function ViewportTopBar() {
                 Exploded View
               </button>
 
-              {isLargePuzzle && !activeEditChunk && (
+              {isLargePuzzle && (
                 <button
                   onClick={() => {
-                    setActiveEditChunk({ startX: 0, startZ: 0, width: editChunkW, length: editChunkL });
-                    setSkipSplitPrompt(true);
+                    if (activeEditChunk) {
+                      setActiveEditChunk(null);
+                    } else {
+                      setActiveEditChunk({ startX: 0, startZ: 0, width: editChunkW, length: editChunkL });
+                      setSkipSplitPrompt(true);
+                    }
                   }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-blue-600/20 text-blue-400 hover:bg-blue-600/30"
-                  title="Split Workspace"
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    activeEditChunk ? 'bg-blue-600/40 text-blue-300 hover:bg-blue-600/50' : 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/30'
+                  }`}
+                  title={activeEditChunk ? "Exit Split View" : "Split Workspace"}
                 >
                   <SplitSquareHorizontal size={14} />
-                  Split View
+                  {activeEditChunk ? 'Exit Split View' : 'Split View'}
                 </button>
               )}
             </div>

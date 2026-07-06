@@ -10,6 +10,7 @@ import { KlemmbrickGenerator } from '@/lib/geometry/klemmbrick-generator';
 import { calculateTolerances, STUD_PITCH } from '@/lib/math/tolerances';
 import { usePuzzleStore, MaterialProfile } from '@/store/usePuzzleStore';
 import * as THREE from 'three';
+import { X } from 'lucide-react';
 
 // Helper component to safely render InstancedMesh without NaN warnings on first frame
 function BrickGroup({ group }: { group: any }) {
@@ -685,6 +686,27 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           far={50} 
           position={[0, -0.01, 0]}
         />
+        {/* Helper Grid */}
+        <gridHelper 
+          args={[
+            activeEditChunk 
+              ? (Math.max(activeEditChunk.width, activeEditChunk.length) + 4) * 8.0 
+              : (Math.max(width, length) + 4) * 8.0, // Grid size in mm (+4 for padding)
+            activeEditChunk 
+              ? Math.max(activeEditChunk.width, activeEditChunk.length) + 4
+              : Math.max(width, length) + 4,         // Divisions (one per stud + padding)
+            0x444444, 0x222222
+          ]} 
+          position={
+            activeEditChunk 
+              ? [
+                  ((activeEditChunk.startX + activeEditChunk.width / 2) - width / 2) * 8.0, 
+                  -1, 
+                  ((activeEditChunk.startZ + activeEditChunk.length / 2) - length / 2) * 8.0
+                ]
+              : [0, -1, 0]
+          } 
+        />
 
         {/* Controls */}
         <OrbitControls 
@@ -733,9 +755,10 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
             Chunk Navigator
             <button 
               onClick={() => setActiveEditChunk(null)}
-              className="text-zinc-500 hover:text-white"
+              className="text-zinc-500 hover:text-white p-0.5 rounded hover:bg-zinc-800 transition-colors ml-4"
+              title="Close Navigator"
             >
-              Exit
+              <X size={14} />
             </button>
           </div>
           <div 

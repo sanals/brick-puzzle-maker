@@ -47,3 +47,16 @@ This document outlines the planned features for advanced frame customization and
    - Modify the outer side of the detached border pieces to be thinner (stepped down). 
    - This thinner edge will act as a lip that easily slides into the grooves of a standard wooden/metal picture frame.
    - Update the chunking and export logic to ensure these new frame pieces can be grouped and exported efficiently.
+
+## Phase 4: Extreme Performance Enhancements
+*Focus: Scaling to massive grids (e.g., 200x200) without crashing the browser or freezing the UI.*
+
+1. **Level of Detail (LOD) UI Toggle**
+   - Introduce a "Performance Mode" toggle in the UI with clear warnings about its impact on visual fidelity vs. speed.
+   - **Preview Mode (High Performance):** Generate extremely simplified meshes for bricks (e.g., simple cubes with basic cylinders for studs, omitting all internal tubes and bottom cavities). This drastically cuts polygon count for rendering.
+   - **Printable Mode (High Fidelity):** Generate the true, mathematically accurate geometry required for CSG and 3D printing.
+   - Exporter will always override and use High Fidelity for the final `.3mf` file.
+
+2. **Web Worker Offloading**
+   - Move the heavy CSG (Constructive Solid Geometry) boolean operations into background `Web Workers`.
+   - This ensures the main browser thread never freezes when generating large baseplates or processing complex modifications, allowing the user to interact with the UI while the geometry generates in the background.
