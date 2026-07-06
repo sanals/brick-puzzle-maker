@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { Layers, Cuboid, Expand, LocateFixed, Undo2, Redo2, Box, Grid3X3, SplitSquareHorizontal } from 'lucide-react';
+import React, { useTransition } from 'react';
+import { Layers, Cuboid, Expand, LocateFixed, Undo2, Redo2, Box, Grid3X3, SplitSquareHorizontal, Zap, Loader2 } from 'lucide-react';
 import { usePuzzleStore } from '@/store/usePuzzleStore';
 
 export function ViewportTopBar() {
@@ -13,8 +13,11 @@ export function ViewportTopBar() {
     triggerCameraReset,
     undo, redo, historyIndex, history,
     viewMode, setViewMode,
+    highResMode, setHighResMode,
     facesCount
   } = usePuzzleStore();
+
+  const [isPending, startTransition] = useTransition();
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
@@ -59,6 +62,33 @@ export function ViewportTopBar() {
             Brick Map
           </button>
         </div>
+
+        {/* Performance Mode Toggle (Only in 3D View) */}
+        {viewMode === '3d' && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                startTransition(() => {
+                  setHighResMode(!highResMode);
+                });
+              }}
+              disabled={isPending}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors rounded-md border ${
+                !highResMode 
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20' 
+                  : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200'
+              } ${isPending ? 'opacity-75 cursor-not-allowed' : ''}`}
+              title={!highResMode ? "High Performance preview active" : "Print-Ready rendering active"}
+            >
+              {isPending ? (
+                <Loader2 size={14} className="animate-spin text-zinc-400" />
+              ) : (
+                <Zap size={14} className={!highResMode ? "text-emerald-400" : ""} />
+              )}
+              {!highResMode ? "Fast Preview" : "Print-Ready"}
+            </button>
+          </div>
+        )}
 
         <div className="w-px h-4 bg-zinc-700 mx-1"></div>
 

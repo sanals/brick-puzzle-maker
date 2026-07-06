@@ -43,6 +43,10 @@ export interface PuzzleState {
   // Split View & Map View
   viewMode: '3d' | 'map';
   setViewMode: (mode: '3d' | 'map') => void;
+
+  highResMode: boolean;
+  setHighResMode: (val: boolean) => void;
+
   activeEditChunk: { startX: number; startZ: number; width: number; length: number } | null;
   setActiveEditChunk: (chunk: { startX: number; startZ: number; width: number; length: number } | null) => void;
   skipSplitPrompt: boolean;
@@ -122,6 +126,10 @@ export const usePuzzleStore = create<PuzzleState>()(
       activePaintColor: null,
       viewMode: '3d',
       setViewMode: (mode) => set({ viewMode: mode }),
+
+      highResMode: false,
+      setHighResMode: (val) => set({ highResMode: val }),
+
       activeEditChunk: null,
       setActiveEditChunk: (chunk) => set({ activeEditChunk: chunk }),
       skipSplitPrompt: false,

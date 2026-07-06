@@ -9,19 +9,22 @@ export class KlemmbrickGenerator {
   public tolerances: PrintTolerances;
   public heightScale: number;
   public isExport: boolean;
+  public lowPoly: boolean;
 
   constructor(
     width: number,
     length: number,
     tolerances: PrintTolerances,
     heightScale: number = 1 / 3,
-    isExport: boolean = false
+    isExport: boolean = false,
+    lowPoly: boolean = true
   ) {
     this.width = width;
     this.length = length;
     this.tolerances = tolerances;
     this.heightScale = heightScale;
     this.isExport = isExport;
+    this.lowPoly = lowPoly;
   }
 
   public generateGeometry(): THREE.BufferGeometry {
@@ -44,6 +47,33 @@ export class KlemmbrickGenerator {
     
     const overallWidth = this.width * STUD_PITCH - wallPlay;
     const overallLength = this.length * STUD_PITCH - wallPlay;
+
+    // PREVIEW MODE: Extremely low polygon count for UI performance
+    if (this.lowPoly) {
+      const boxGeo = new THREE.BoxGeometry(overallWidth, baseHeight, overallLength);
+      boxGeo.translate(0, baseHeight / 2, 0);
+      geometriesToMerge.push(boxGeo);
+
+      const studRadius = this.tolerances.studDiameter / 2;
+      const studGeo = new THREE.CylinderGeometry(studRadius, studRadius, BASE_STUD_HEIGHT, 8); // Only 8 segments
+      studGeo.translate(0, baseHeight + BASE_STUD_HEIGHT / 2, 0);
+
+      const startX = -overallWidth / 2 + (STUD_PITCH / 2) - (wallPlay / 2);
+      const startZ = -overallLength / 2 + (STUD_PITCH / 2) - (wallPlay / 2);
+
+      for (let x = 0; x < this.width; x++) {
+        for (let z = 0; z < this.length; z++) {
+          const studClone = studGeo.clone();
+          studClone.translate(startX + x * STUD_PITCH, 0, startZ + z * STUD_PITCH);
+          geometriesToMerge.push(studClone);
+        }
+      }
+
+      const merged = mergeGeometries(geometriesToMerge, false);
+      merged.computeVertexNormals();
+      return merged;
+    }
+
     const innerWidth = overallWidth - (wallThickness * 2);
     const innerLength = overallLength - (wallThickness * 2);
 

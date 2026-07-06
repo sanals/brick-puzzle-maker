@@ -1,16 +1,28 @@
 'use client';
 
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useRef, useState, useEffect, useDeferredValue } from 'react';
 import { Canvas, ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
+import { OrbitControls, Environment, ContactShadows } from '@react-three/drei';
 import { BaseplateGenerator } from '@/lib/geometry/baseplate-generator';
-import { BrickGenerator } from '@/lib/geometry/brick-generator';
 import { BrickOptimizer, OptimizedBrick } from '@/lib/geometry/brick-optimizer';
 import { KlemmbrickGenerator } from '@/lib/geometry/klemmbrick-generator';
 import { calculateTolerances, STUD_PITCH } from '@/lib/math/tolerances';
 import { usePuzzleStore, MaterialProfile } from '@/store/usePuzzleStore';
 import * as THREE from 'three';
 import { X } from 'lucide-react';
+
+const geometryCache = new Map<string, THREE.BufferGeometry>();
+
+function getCachedGeometry(w: number, l: number, materialProfile: MaterialProfile, snapFit: number, highResMode: boolean) {
+  const tolerances = calculateTolerances(materialProfile, snapFit);
+  const key = `${w}x${l}-${materialProfile}-${snapFit}-${highResMode}`;
+  if (!geometryCache.has(key)) {
+    const gen = new KlemmbrickGenerator(w, l, tolerances.snapFit, 1/3, false, !highResMode);
+    const geometry = gen.generateGeometry();
+    geometryCache.set(key, geometry);
+  }
+  return geometryCache.get(key)!;
+}
 
 // Helper component to safely render InstancedMesh without NaN warnings on first frame
 function BrickGroup({ group }: { group: any }) {
@@ -77,7 +89,8 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     setActiveEditChunk,
     skipSplitPrompt,
     setSkipSplitPrompt,
-    setFacesCount
+    setFacesCount,
+    highResMode
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
 
@@ -122,7 +135,14 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         true, true, true, true,
         connectorHoleDiameter, connectorHoleDepth, false, holePlacement
       );
-      chunks.push({ geometry: gen.generateGeometry(), position: [0, 0, 0] as [number, number, number] });
+      chunks.push({ 
+        geometry: gen.generateGeometry(), 
+        position: [0, 0, 0] as [number, number, number],
+        gridX: 0,
+        gridZ: 0,
+        gridW: totalWidth,
+        gridL: totalLength
+      });
     } else {
       const numX = Math.ceil(totalWidth / baseChunkSize);
       const numZ = Math.ceil(totalLength / baseChunkSize);
@@ -167,14 +187,16 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     return chunks;
   }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth, holePlacement]);
 
+  const deferredVoxelMatrix = useDeferredValue(voxelMatrix);
+
   const allOptimizedBricks = useMemo(() => {
-    const isHeightmap = voxelMatrix?.cells[0]?.[0]?.height !== undefined;
+    const isHeightmap = deferredVoxelMatrix?.cells[0]?.[0]?.height !== undefined;
 
     // Generate separate bricks if it's a mosaic
-    if (voxelMatrix && !isHeightmap) {
+    if (deferredVoxelMatrix && !isHeightmap) {
       let optimizedBricks = customBricks;
       if (!optimizedBricks) {
-        const optimizer = new BrickOptimizer(voxelMatrix, width, length);
+        const optimizer = new BrickOptimizer(deferredVoxelMatrix, width, length);
         optimizedBricks = optimizer.optimize({
           allowNonStandardSizes: allowNonStandardSizes
         });
@@ -185,7 +207,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         optimizedBricks = [];
         for (let x = 0; x < width; x++) {
           for (let z = 0; z < length; z++) {
-            const cell = voxelMatrix.cells[x]?.[z];
+            const cell = deferredVoxelMatrix.cells[x]?.[z];
             if (cell?.hexColor) {
               optimizedBricks.push({ x, z, width: 1, length: 1, hexColor: cell.hexColor });
             }
@@ -195,7 +217,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       return optimizedBricks;
     }
     return null;
-  }, [width, length, voxelMatrix, customBricks, optimizePieces, allowNonStandardSizes]);
+  }, [width, length, deferredVoxelMatrix, customBricks, optimizePieces, allowNonStandardSizes]);
 
   const instancedBricks = useMemo(() => {
     if (!allOptimizedBricks) return null;
@@ -237,19 +259,9 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
 
       for (const [key, bricks] of groups.entries()) {
          const [w, l] = key.split('x').map(Number);
-         const gen = new KlemmbrickGenerator(w, l, tolerances.snapFit, 1/3);
-         const geometry = gen.generateGeometry();
          
-         if (geometry.attributes.position) {
-           const posArray = geometry.attributes.position.array as Float32Array;
-           for (let i = 0; i < posArray.length; i++) {
-             if (isNaN(posArray[i])) {
-               console.error(`NaN found in KlemmbrickGenerator geometry for ${w}x${l} at index ${i}`);
-               break;
-             }
-           }
-         }
-
+         const geometry = getCachedGeometry(w, l, materialProfile, snapFit, highResMode);
+         
          const matrixArray = new Float32Array(bricks.length * 16);
          const colorArray = new Float32Array(bricks.length * 3);
          
@@ -279,7 +291,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       }
 
     return instancedGroups;
-  }, [width, length, materialProfile, snapFit, allOptimizedBricks, activeEditChunk, borderWidth]);
+  }, [width, length, materialProfile, snapFit, allOptimizedBricks, activeEditChunk, borderWidth, highResMode]);
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
     // Let OrbitControls handle mouse down for rotation/panning.
@@ -570,9 +582,6 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
             key={index} 
             geometry={chunk.geometry} 
             position={chunk.position}
-            onClick={handleClick}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
           >
             <meshStandardMaterial 
               color="#3b82f6" 
@@ -585,7 +594,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
 
         {/* Instanced Mosaic Bricks Mesh */}
         {showBricks && instancedBricks && (
-          <group position={[0, explodedView ? 5.0 : 0, 0]} onClick={handleClick} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp}>
+          <group position={[0, explodedView ? 5.0 : 0, 0]}>
             {instancedBricks.map((group) => (
               <BrickGroup key={group.key} group={group} />
             ))}
@@ -671,13 +680,6 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         )}
 
         {/* Ground grid and shadows for premium aesthetics */}
-        <Grid 
-          infiniteGrid 
-          fadeDistance={200} 
-          cellColor="#3f3f46" 
-          sectionColor="#52525b" 
-          position={[0, -0.01, 0]}
-        />
         <ContactShadows 
           resolution={1024} 
           scale={150} 
@@ -707,6 +709,19 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
               : [0, -1, 0]
           } 
         />
+
+        {/* Global Raycast Plane - Solves massive CSG Raycasting lag */}
+        <mesh 
+          rotation={[-Math.PI / 2, 0, 0]} 
+          position={[0, 9.6, 0]}
+          onClick={handleClick}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        >
+          <planeGeometry args={[5000, 5000]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
 
         {/* Controls */}
         <OrbitControls 
