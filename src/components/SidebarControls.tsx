@@ -41,8 +41,10 @@ export function SidebarControls() {
     cropRatio, setCropRatio,
     basePlateSize, setBasePlateSize,
     scaleMultiplier, setScaleMultiplier,
-    setupStep, setSetupStep, resetToSetup
+    resetModifications
   } = usePuzzleStore();
+  
+  const [activeTab, setActiveTab] = useState<'baseplate' | 'bricks'>('baseplate');
   
   const [processingMode, setProcessingMode] = useState<ProcessingMode>('nearest-lego');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -221,7 +223,7 @@ export function SidebarControls() {
 
   // Trigger image processing whenever source or dimensions change
   useEffect(() => {
-    if (!uploadedImageSrc || setupStep !== 1) return;
+    if (!uploadedImageSrc) return;
 
     setIsProcessing(true);
     const img = new Image();
@@ -279,12 +281,26 @@ export function SidebarControls() {
       worker.postMessage(request);
     };
     img.src = uploadedImageSrc;
-  }, [width, length, processingMode, uploadedImageSrc, setupStep, setVoxelMatrix, setActivePaintColor]);
+  }, [width, length, processingMode, uploadedImageSrc, setVoxelMatrix, setActivePaintColor]);
 
   return (
     <div className="w-80 bg-zinc-900 text-zinc-100 flex flex-col h-screen border-r border-zinc-800">
+      <div className="flex border-b border-zinc-800 bg-zinc-950">
+        <button
+          onClick={() => setActiveTab('baseplate')}
+          className={`flex-1 py-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === 'baseplate' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
+        >
+          Baseplate Layout
+        </button>
+        <button
+          onClick={() => setActiveTab('bricks')}
+          className={`flex-1 py-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === 'bricks' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
+        >
+          Lego Bricks
+        </button>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-        <h2 className="text-xl font-bold text-white tracking-tight">Brick Generator</h2>
       
       {cropFile && (
         <CropModal
@@ -294,7 +310,7 @@ export function SidebarControls() {
         />
       )}
 
-      {setupStep === 1 && (
+      {activeTab === 'baseplate' && (
         <>
           {/* Design Layout */}
           <div className="space-y-4">
@@ -520,22 +536,21 @@ export function SidebarControls() {
         </>
       )}
 
-      {setupStep === 2 && (
+      {activeTab === 'bricks' && (
         <>
-          <div className="flex items-center justify-between bg-blue-900/20 border border-blue-900 rounded p-3 mb-2">
+          <div className="flex items-center justify-between bg-zinc-800/50 rounded p-3 mb-2">
             <div>
-              <div className="text-xs text-blue-400 font-semibold uppercase">Edit Mode Active</div>
-              <div className="text-xs text-zinc-400 mt-0.5">{width}x{length} baseplate</div>
+              <div className="text-xs text-zinc-300 font-semibold">Baseplate: {width}x{length}</div>
             </div>
             <button 
               onClick={() => {
-                if (confirm("Going back to Setup will reset all your colors and manual edits. Are you sure you want to discard your puzzle?")) {
-                  resetToSetup();
+                if (confirm("This will discard all your manual painting, cuts, and joins, reverting to the original image generation. Are you sure?")) {
+                  resetModifications();
                 }
               }}
-              className="text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded transition-colors"
+              className="text-xs bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-red-300 px-3 py-1.5 rounded transition-colors"
             >
-              Reset
+              Reset Edits
             </button>
           </div>
 
@@ -664,17 +679,7 @@ export function SidebarControls() {
 
           {/* Accessibility & View Modes */}
           <div className="space-y-2 mt-4">
-            <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">View Modes</h3>
-            
-            <label className="flex items-center gap-2 text-sm text-zinc-300">
-              <input 
-                type="checkbox" 
-                checked={explodedView} 
-                onChange={(e) => setExplodedView(e.target.checked)}
-                className="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-blue-600"
-              />
-              Exploded View
-            </label>
+            <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Accessibility & Optimization</h3>
 
             <label className="flex items-center gap-2 text-sm text-zinc-300">
               <input 
@@ -685,29 +690,6 @@ export function SidebarControls() {
               />
               Simulate Colorblindness
             </label>
-
-            <div className="pt-2">
-              <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">Visibility</h3>
-              
-              <label className="flex items-center gap-2 text-sm text-zinc-300">
-                <input 
-                  type="checkbox" 
-                  checked={showBaseplate} 
-                  onChange={(e) => setShowBaseplate(e.target.checked)}
-                  className="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-blue-600"
-                />
-                Show Baseplate
-              </label>
-              <label className="flex items-center gap-2 text-sm text-zinc-300 mt-2">
-                <input 
-                  type="checkbox" 
-                  checked={showBricks} 
-                  onChange={(e) => setShowBricks(e.target.checked)}
-                  className="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-blue-600"
-                />
-                Show Mosaic Bricks
-              </label>
-            </div>
 
             <div className="pt-2">
               <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">Mosaic Optimization</h3>
@@ -804,6 +786,7 @@ export function SidebarControls() {
                 onChange={(e) => setInfillPercentage(Number(e.target.value))}
                 className="w-full accent-blue-500"
               />
+              <p className="text-[10px] text-zinc-500 leading-tight">Controls the internal density of exported bricks. Lower infill saves material and prints faster, but might make large parts less rigid. 15% is standard.</p>
             </div>
 
             <div className="space-y-2">
@@ -828,6 +811,7 @@ export function SidebarControls() {
                 onChange={(e) => setShellCount(Number(e.target.value))}
                 className="w-full accent-blue-500"
               />
+              <p className="text-[10px] text-zinc-500 leading-tight">Controls the number of outer wall perimeters. Higher shell count increases strength and prevents light bleeding through light colors, but uses more material. 2 is standard.</p>
             </div>
           </div>
         </>
@@ -836,27 +820,25 @@ export function SidebarControls() {
 
       {/* Fixed Actions Button at the bottom */}
       <div className="p-4 bg-zinc-950 border-t border-zinc-800">
-        {setupStep === 1 ? (
+        {!voxelMatrix ? (
           <button 
             onClick={() => {
-              if (!voxelMatrix) {
-                // Generate a blank canvas
-                const blankMatrix = {
-                  width, height: length, depth: 1,
-                  palette: [{ hex: "#ffffff", label: "White", index: 0, count: width * length, rgb: [255, 255, 255] as [number, number, number], coverage: 1 }],
-                  cells: Array(width).fill(0).map(() => Array(length).fill({
-                    hexColor: "#ffffff", label: "White", colorIndex: 0
-                  }))
-                };
-                setVoxelMatrix(blankMatrix);
-                setActivePaintColor(blankMatrix.palette[0]);
-              }
-              setSetupStep(2);
+              // Generate a blank canvas
+              const blankMatrix = {
+                width, height: length, depth: 1,
+                palette: [{ hex: "#ffffff", label: "White", index: 0, count: width * length, rgb: [255, 255, 255] as [number, number, number], coverage: 1 }],
+                cells: Array(width).fill(0).map(() => Array(length).fill({
+                  hexColor: "#ffffff", label: "White", colorIndex: 0
+                }))
+              };
+              setVoxelMatrix(blankMatrix);
+              setActivePaintColor(blankMatrix.palette[0]);
+              setActiveTab('bricks');
             }}
             disabled={isProcessing}
             className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 text-white rounded p-3 text-sm font-bold tracking-wide transition-colors"
           >
-            {voxelMatrix ? 'Next: Edit Puzzle' : 'Create Blank Canvas'}
+            Create Blank Canvas
           </button>
         ) : (
           <button 

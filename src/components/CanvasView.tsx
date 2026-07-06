@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { Canvas, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
 import { BaseplateGenerator } from '@/lib/geometry/baseplate-generator';
@@ -70,9 +70,18 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     borderWidth,
     connectorHoleDiameter,
     connectorHoleDepth,
-    holePlacement
+    holePlacement,
+    cameraResetTrigger
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
+
+  // Reset camera when triggered
+  useEffect(() => {
+    if (cameraResetTrigger > 0 && controlsRef.current) {
+      controlsRef.current.reset();
+    }
+  }, [cameraResetTrigger]);
+
   const [hoverAction, setHoverAction] = useState<{
     type: 'cut' | 'join';
     axis: 'x' | 'z';

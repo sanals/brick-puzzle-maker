@@ -37,6 +37,7 @@ export interface PuzzleState {
   shellCount: number;
   materialProfile: MaterialProfile;
   voxelMatrix: VoxelMatrix | null;
+  originalVoxelMatrix: VoxelMatrix | null;
   activePaintColor: PaletteColor | null;
 
   // History for Undo/Redo
@@ -46,10 +47,9 @@ export interface PuzzleState {
   customBricks: OptimizedBrick[] | null;
   setCustomBricks: (bricks: OptimizedBrick[] | null) => void;
 
-  // Wizard Flow
-  setupStep: 1 | 2;
-  setSetupStep: (step: 1 | 2) => void;
-  resetToSetup: () => void;
+  resetModifications: () => void;
+  cameraResetTrigger: number;
+  triggerCameraReset: () => void;
 
   // Actions
   setInfillPercentage: (infill: number) => void;
@@ -108,21 +108,25 @@ export const usePuzzleStore = create<PuzzleState>()(
       shellCount: 2,
       materialProfile: 'PLA Rigid',
       voxelMatrix: null,
+      originalVoxelMatrix: null,
       activePaintColor: null,
       history: [],
       historyIndex: -1,
       paintMode: 'stud',
       customBricks: null,
       setCustomBricks: (bricks) => set({ customBricks: bricks }),
+      cameraResetTrigger: 0,
+      triggerCameraReset: () => set((state) => ({ cameraResetTrigger: state.cameraResetTrigger + 1 })),
 
-      setupStep: 1,
-      setSetupStep: (step) => set({ setupStep: step }),
-      resetToSetup: () => set({ 
-        setupStep: 1, 
-        voxelMatrix: null, 
-        customBricks: null, 
-        history: [], 
-        historyIndex: -1 
+      resetModifications: () => set((state) => {
+        if (!state.originalVoxelMatrix) return state;
+        const freshCopy = structuredClone(state.originalVoxelMatrix);
+        return {
+          voxelMatrix: freshCopy,
+          customBricks: null,
+          history: [freshCopy],
+          historyIndex: 0
+        };
       }),
 
       setInfillPercentage: (infillPercentage) => set({ infillPercentage }),
@@ -130,8 +134,10 @@ export const usePuzzleStore = create<PuzzleState>()(
       setMaterialProfile: (materialProfile) => set({ materialProfile }),
       setVoxelMatrix: (voxelMatrix) => set({ 
         voxelMatrix,
+        originalVoxelMatrix: voxelMatrix ? structuredClone(voxelMatrix) : null,
         history: voxelMatrix ? [structuredClone(voxelMatrix)] : [],
-        historyIndex: voxelMatrix ? 0 : -1
+        historyIndex: voxelMatrix ? 0 : -1,
+        customBricks: null
       }),
       setActivePaintColor: (activePaintColor) => set({ activePaintColor }),
       
