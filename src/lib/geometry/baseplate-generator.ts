@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { Evaluator, Brush } from 'three-bvh-csg';
 import { PrintTolerances, STUD_PITCH, BASE_STUD_HEIGHT } from '../math/tolerances';
 import { VoxelMatrix } from '../types';
 
@@ -16,15 +17,42 @@ export class BaseplateGenerator {
   public width: number;
   public length: number;
   public tolerances: PrintTolerances;
-  public baseHeightRatio: number; // 1 for standard brick, 1/3 for plate
+  public baseHeightRatio: number;
   public voxelMatrix?: VoxelMatrix | null;
+  public hasLeftHoles: boolean;
+  public hasRightHoles: boolean;
+  public hasTopHoles: boolean;
+  public hasBottomHoles: boolean;
+  public connectorHoleDiameter: number;
+  public connectorHoleDepth: number;
+  public isExport: boolean;
 
-  constructor(width: number, length: number, tolerances: PrintTolerances, baseHeightRatio: number = 1/3, voxelMatrix?: VoxelMatrix | null) {
+  constructor(
+    width: number, 
+    length: number, 
+    tolerances: PrintTolerances, 
+    baseHeightRatio: number = 1.0, 
+    voxelMatrix?: VoxelMatrix | null,
+    hasLeftHoles: boolean = false,
+    hasRightHoles: boolean = false,
+    hasTopHoles: boolean = false,
+    hasBottomHoles: boolean = false,
+    connectorHoleDiameter: number = 5.1,
+    connectorHoleDepth: number = 8.5,
+    isExport: boolean = false
+  ) {
     this.width = width;
     this.length = length;
     this.tolerances = tolerances;
     this.baseHeightRatio = baseHeightRatio;
     this.voxelMatrix = voxelMatrix;
+    this.hasLeftHoles = hasLeftHoles;
+    this.hasRightHoles = hasRightHoles;
+    this.hasTopHoles = hasTopHoles;
+    this.hasBottomHoles = hasBottomHoles;
+    this.connectorHoleDiameter = connectorHoleDiameter;
+    this.connectorHoleDepth = connectorHoleDepth;
+    this.isExport = isExport;
   }
 
   /**
@@ -62,8 +90,9 @@ export class BaseplateGenerator {
     // 2. Studs
     const studRadius = this.tolerances.studDiameter / 2;
     // We use 16 segments for performance, which is sufficient for printing tiny studs
-    const studGeo = new THREE.CylinderGeometry(studRadius, studRadius, BASE_STUD_HEIGHT, 16);
-    studGeo.translate(0, BASE_STUD_HEIGHT / 2, 0); // rest cylinder on origin
+    // Sink the stud slightly to avoid coplanar CSG precision errors (infinite loops)
+    const studGeo = new THREE.CylinderGeometry(studRadius, studRadius, BASE_STUD_HEIGHT + 0.02, 16);
+    studGeo.translate(0, (BASE_STUD_HEIGHT + 0.02) / 2 - 0.01, 0); // rest cylinder on origin, sunken by 0.01
 
     const startX = -overallWidth / 2 + (STUD_PITCH / 2) - (wallPlay / 2);
     const startZ = -overallLength / 2 + (STUD_PITCH / 2) - (wallPlay / 2);
@@ -104,21 +133,89 @@ export class BaseplateGenerator {
       }
     }
 
-    // Merge everything into a single BufferGeometry for CSG or rendering
-    const mergedGeometry = mergeGeometries(geometriesToMerge, false);
+    let mergedGeometry = geometriesToMerge[0];
+    const studsGeometries = geometriesToMerge.slice(1);
+
+    // Only run heavy CSG union for export. For live rendering, triangle soup is much faster.
+    if (this.isExport && studsGeometries.length > 0) {
+      const baseBrush = new Brush(geometriesToMerge[0]); // The main box
+      const evaluator = new Evaluator();
+      evaluator.useGroups = false;
+
+      const mergedStuds = mergeGeometries(studsGeometries, false);
+      const studsBrush = new Brush(mergedStuds);
+      const unionResult = evaluator.evaluate(baseBrush, studsBrush, 0); // 0 = ADDITION
+      mergedGeometry = unionResult.geometry;
+    } else if (studsGeometries.length > 0) {
+      mergedGeometry = mergeGeometries(geometriesToMerge, false);
+    }
     
+    // 3. Technic CSG Holes
+    if (this.hasLeftHoles || this.hasRightHoles || this.hasTopHoles || this.hasBottomHoles) {
+      const holeRadius = this.connectorHoleDiameter / 2; // Default FDM tolerance for a 4.8mm pin is 5.1
+      const holeDepth = this.connectorHoleDepth; // Depth of the hole into the side
+      const holeY = 4.8; // Center of a 9.6mm tall brick
+      const holeInterval = 8; // One hole every 8 studs
+
+      const holeGeometries: THREE.BufferGeometry[] = [];
+
+      // Helper to generate symmetric holes along an edge
+      const generateHoles = (
+        isXEdge: boolean, 
+        edgeOffset: number, 
+        lengthStuds: number,
+        startStudOffset: number
+      ) => {
+        const holeIndices = new Set<number>();
+        
+        // Lego Math dictates that perfectly symmetric 8-stud repeating grids 
+        // are impossible on most board sizes. 
+        // The most foolproof and standard way to guarantee any two boards 
+        // can connect flush at their corners is to place exactly two holes per edge, 
+        // anchored a fixed distance from the corners.
+        // We place them at the 5th stud from the corner (index 4).
+        if (lengthStuds >= 12) {
+          holeIndices.add(4);
+          holeIndices.add(lengthStuds - 1 - 4);
+        }
+
+        Array.from(holeIndices).forEach(i => {
+          const geo = new THREE.CylinderGeometry(holeRadius, holeRadius, holeDepth, 16);
+          // Rotate cylinder so it points into the face
+          if (isXEdge) {
+            geo.rotateZ(Math.PI / 2); // points along X
+            geo.translate(edgeOffset, holeY, startStudOffset + i * STUD_PITCH);
+          } else {
+            geo.rotateX(Math.PI / 2); // points along Z
+            geo.translate(startStudOffset + i * STUD_PITCH, holeY, edgeOffset);
+          }
+          holeGeometries.push(geo);
+        });
+      };
+
+      if (this.hasLeftHoles) generateHoles(true, -overallWidth / 2, this.length, startZ);
+      if (this.hasRightHoles) generateHoles(true, overallWidth / 2, this.length, startZ);
+      if (this.hasTopHoles) generateHoles(false, -overallLength / 2, this.width, startX);
+      if (this.hasBottomHoles) generateHoles(false, overallLength / 2, this.width, startX);
+
+      if (holeGeometries.length > 0) {
+        const mergedHoles = mergeGeometries(holeGeometries, false);
+        
+        // Use three-bvh-csg to subtract holes
+        const baseBrush = new Brush(mergedGeometry);
+        const holeBrush = new Brush(mergedHoles);
+        
+        const evaluator = new Evaluator();
+        const result = evaluator.evaluate(baseBrush, holeBrush, 1); // 1 = SUBTRACTION
+        
+        mergedGeometry = result.geometry;
+      }
+    }
+
     mergedGeometry.computeVertexNormals();
 
     return mergedGeometry;
   }
-
-  /**
-   * For Phase 1 compatibility: return the non-uniform data structure before merging.
-   * Useful when different components need different boolean operations.
-   */
-  /**
-   * Helper to set vertex colors for a whole geometry buffer
-   */
   private applyVertexColors(geometry: THREE.BufferGeometry, color: THREE.Color) {
     const positionAttribute = geometry.getAttribute('position');
     const colors = new Float32Array(positionAttribute.count * 3);

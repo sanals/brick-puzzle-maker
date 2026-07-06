@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { getDB, saveProject, getProject } from './storage-utils';
-import { VoxelMatrix, PaletteColor } from '../lib/types';
+import { VoxelMatrix, PaletteColor, CropRatio, BasePlateSize, ScaleMultiplier, CROP_RATIOS } from '../lib/types';
 import { OptimizedBrick } from '../lib/geometry/brick-optimizer';
 
 export type MaterialProfile = 'PLA Rigid' | 'PETG' | 'TPU Flexible' | 'Translucent';
@@ -14,6 +14,22 @@ export interface PuzzleState {
   setWidth: (w: number) => void;
   setLength: (l: number) => void;
   setSnapFit: (s: number) => void;
+  
+  baseChunkSize: number;
+  setBaseChunkSize: (s: number) => void;
+  borderWidth: number;
+  setBorderWidth: (w: number) => void;
+  connectorHoleDiameter: number;
+  setConnectorHoleDiameter: (d: number) => void;
+  connectorHoleDepth: number;
+  setConnectorHoleDepth: (d: number) => void;
+  
+  cropRatio: CropRatio;
+  setCropRatio: (r: CropRatio) => void;
+  basePlateSize: BasePlateSize;
+  setBasePlateSize: (s: BasePlateSize) => void;
+  scaleMultiplier: ScaleMultiplier;
+  setScaleMultiplier: (m: ScaleMultiplier) => void;
 
   infillPercentage: number;
   shellCount: number;
@@ -70,6 +86,20 @@ export const usePuzzleStore = create<PuzzleState>()(
       setWidth: (width) => set({ width }),
       setLength: (length) => set({ length }),
       setSnapFit: (snapFit) => set({ snapFit }),
+      baseChunkSize: 16,
+      setBaseChunkSize: (baseChunkSize) => set({ baseChunkSize }),
+      borderWidth: 0,
+      setBorderWidth: (borderWidth) => set({ borderWidth }),
+      connectorHoleDiameter: 5.1,
+      setConnectorHoleDiameter: (connectorHoleDiameter) => set({ connectorHoleDiameter }),
+      connectorHoleDepth: 8.5,
+      setConnectorHoleDepth: (connectorHoleDepth) => set({ connectorHoleDepth }),
+      cropRatio: CROP_RATIOS[0], // default 1:1
+      setCropRatio: (cropRatio) => set({ cropRatio }),
+      basePlateSize: 16,
+      setBasePlateSize: (basePlateSize) => set({ basePlateSize }),
+      scaleMultiplier: 1,
+      setScaleMultiplier: (scaleMultiplier) => set({ scaleMultiplier }),
       infillPercentage: 15,
       shellCount: 2,
       materialProfile: 'PLA Rigid',

@@ -2,6 +2,10 @@
 
 export type EmbossingStyle = "raised" | "recessed"
 
+/** A single quantized palette entry. */
+export const MIN_COLORS = 2
+export const MAX_COLORS = 16
+
 export interface CropRatio {
   id: string
   label: string
@@ -24,12 +28,8 @@ export const CROP_RATIOS: CropRatio[] = [
 ]
 
 export type BasePlateSize = 16 | 24
-export type ScaleMultiplier = 1 | 2 | 3 | 4 | 5 | 6
+export type ScaleMultiplier = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10
 
-export const MIN_COLORS = 2
-export const MAX_COLORS = 16
-
-/** A single quantized palette entry. */
 export interface PaletteColor {
   /** Stable index assigned by the quantizer (0-based). */
   index: number

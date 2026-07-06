@@ -4,13 +4,18 @@ import { engraveTextOnBottom } from '../geometry/csg-utils';
 import { build3MF } from './generic-3mf-exporter';
 import { VoxelMatrix, VoxelCell } from '../types';
 import { PrintTolerances } from '../math/tolerances';
+import { ConnectorGenerator } from '../geometry/connector-generator';
+
+const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
 
 export async function exportChunkedBaseplates(
   width: number,
   length: number,
   tolerances: PrintTolerances,
   voxelMatrix: VoxelMatrix | null,
-  chunkSize = 16
+  chunkSize = 16,
+  connectorHoleDiameter: number = 5.1,
+  connectorHoleDepth: number = 8.5
 ): Promise<Blob> {
   const zip = new JSZip();
 
@@ -42,7 +47,20 @@ export async function exportChunkedBaseplates(
       }
 
       // Generate base geometry
-      const generator = new BaseplateGenerator(chunkWidth, chunkLength, tolerances, 1/3, chunkMatrix);
+      const generator = new BaseplateGenerator(
+        chunkWidth, 
+        chunkLength, 
+        tolerances, 
+        1.0, 
+        chunkMatrix, 
+        true, 
+        true, 
+        true, 
+        true,
+        connectorHoleDiameter,
+        connectorHoleDepth,
+        true // isExport
+      );
       let geometry = generator.generateGeometry();
 
       // Engrave text on bottom (e.g. "A1", "B2")
@@ -53,9 +71,18 @@ export async function exportChunkedBaseplates(
       geometry = await engraveTextOnBottom(geometry, label, chunkWidth * 8, chunkLength * 8);
 
       // Export to 3MF
-      const fileBlob = await build3MF(geometry);
-      zip.file(`Plate_${label}.3mf`, fileBlob);
+      const blob = await build3MF(geometry, '#3b82f6');
+      zip.file(`Baseplate_Chunk_${cx + 1}_${cz + 1}.3mf`, blob);
+      await yieldToMain();
     }
+  }
+
+  // Include connector pin if there are multiple chunks
+  if (numChunksX > 1 || numChunksZ > 1) {
+    const connGen = new ConnectorGenerator(tolerances, connectorHoleDiameter, connectorHoleDepth);
+    const connGeo = connGen.generateGeometry();
+    const connBlob = await build3MF(connGeo);
+    zip.file('Technic_Pin.3mf', connBlob);
   }
 
   return zip.generateAsync({ type: 'blob' });

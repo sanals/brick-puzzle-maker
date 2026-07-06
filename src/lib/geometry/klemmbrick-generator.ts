@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { Evaluator, Brush } from 'three-bvh-csg';
 import { PrintTolerances, STUD_PITCH, BASE_STUD_HEIGHT } from '../math/tolerances';
 
 export class KlemmbrickGenerator {
@@ -7,17 +8,20 @@ export class KlemmbrickGenerator {
   public length: number;
   public tolerances: PrintTolerances;
   public heightScale: number;
+  public isExport: boolean;
 
   constructor(
     width: number,
     length: number,
     tolerances: PrintTolerances,
-    heightScale: number = 1 / 3
+    heightScale: number = 1 / 3,
+    isExport: boolean = false
   ) {
     this.width = width;
     this.length = length;
     this.tolerances = tolerances;
     this.heightScale = heightScale;
+    this.isExport = isExport;
   }
 
   public generateGeometry(): THREE.BufferGeometry {
@@ -65,10 +69,10 @@ export class KlemmbrickGenerator {
       geometriesToMerge.push(eWall, wWall);
     }
 
-    // 3. Top Studs
+    // 3. Top Studs (sink slightly into base to avoid coplanar CSG loops)
     const studRadius = this.tolerances.studDiameter / 2;
-    const studGeo = new THREE.CylinderGeometry(studRadius, studRadius, BASE_STUD_HEIGHT, 16);
-    studGeo.translate(0, baseHeight + (BASE_STUD_HEIGHT / 2), 0);
+    const studGeo = new THREE.CylinderGeometry(studRadius, studRadius, BASE_STUD_HEIGHT + 0.02, 16);
+    studGeo.translate(0, baseHeight + (BASE_STUD_HEIGHT + 0.02) / 2 - 0.01, 0);
 
     const startX = -overallWidth / 2 + (STUD_PITCH / 2) - (wallPlay / 2);
     const startZ = -overallLength / 2 + (STUD_PITCH / 2) - (wallPlay / 2);
@@ -81,26 +85,26 @@ export class KlemmbrickGenerator {
       }
     }
 
-    // 4. Inner Ribs (Perimeter)
-    const nsRibGeo = new THREE.BoxGeometry(ribWidth, cavityHeight, ribDepth);
-    const ewRibGeo = new THREE.BoxGeometry(ribDepth, cavityHeight, ribWidth);
+    // 4. Inner Ribs (Perimeter) - intersect into ceiling
+    const nsRibGeo = new THREE.BoxGeometry(ribWidth, cavityHeight + 0.02, ribDepth);
+    const ewRibGeo = new THREE.BoxGeometry(ribDepth, cavityHeight + 0.02, ribWidth);
     
     // North/South Ribs
     for (let x = 0; x < this.width; x++) {
       const posX = startX + x * STUD_PITCH;
       const nRib = nsRibGeo.clone();
-      nRib.translate(posX, cavityHeight / 2, -innerLength / 2 + ribDepth / 2);
+      nRib.translate(posX, (cavityHeight + 0.02) / 2, -innerLength / 2 + ribDepth / 2);
       const sRib = nsRibGeo.clone();
-      sRib.translate(posX, cavityHeight / 2, innerLength / 2 - ribDepth / 2);
+      sRib.translate(posX, (cavityHeight + 0.02) / 2, innerLength / 2 - ribDepth / 2);
       geometriesToMerge.push(nRib, sRib);
     }
     // East/West Ribs
     for (let z = 0; z < this.length; z++) {
       const posZ = startZ + z * STUD_PITCH;
       const eRib = ewRibGeo.clone();
-      eRib.translate(innerWidth / 2 - ribDepth / 2, cavityHeight / 2, posZ);
+      eRib.translate(innerWidth / 2 - ribDepth / 2, (cavityHeight + 0.02) / 2, posZ);
       const wRib = ewRibGeo.clone();
-      wRib.translate(-innerWidth / 2 + ribDepth / 2, cavityHeight / 2, posZ);
+      wRib.translate(-innerWidth / 2 + ribDepth / 2, (cavityHeight + 0.02) / 2, posZ);
       geometriesToMerge.push(eRib, wRib);
     }
 
@@ -111,8 +115,8 @@ export class KlemmbrickGenerator {
       // 1xN or Nx1: Solid/Hollow pips between studs
       const numPips = Math.max(this.width, this.length) - 1;
       const pipRadius = 3.2 / 2; // standard 3.2mm outer diameter for 1xN tubes
-      const pipGeo = new THREE.CylinderGeometry(pipRadius, pipRadius, cavityHeight, 16);
-      pipGeo.translate(0, cavityHeight / 2, 0);
+      const pipGeo = new THREE.CylinderGeometry(pipRadius, pipRadius, cavityHeight + 0.02, 16);
+      pipGeo.translate(0, (cavityHeight + 0.02) / 2, 0); // intersects ceiling
 
       for (let i = 0; i < numPips; i++) {
         const pipClone = pipGeo.clone();
@@ -137,12 +141,12 @@ export class KlemmbrickGenerator {
       shape.holes.push(hole);
 
       const tubeGeo = new THREE.ExtrudeGeometry(shape, {
-        depth: cavityHeight,
+        depth: cavityHeight + 0.02,
         bevelEnabled: false,
         curveSegments: 16
       });
       tubeGeo.rotateX(Math.PI / 2);
-      tubeGeo.translate(0, cavityHeight, 0);
+      tubeGeo.translate(0, cavityHeight + 0.02, 0); // intersects ceiling
 
       for (let x = 0; x < this.width - 1; x++) {
         for (let z = 0; z < this.length - 1; z++) {
@@ -155,16 +159,31 @@ export class KlemmbrickGenerator {
       }
     }
 
-    // Sanitize and merge
+    // Convert all geometries to non-indexed before merging or CSG
+    // CSG requires uv and normal attributes, so we must not strip them!
     const sanitizedGeometries = geometriesToMerge.map(g => {
       let geo = g;
       if (geo.index) geo = geo.toNonIndexed();
-      geo.deleteAttribute('uv');
-      geo.deleteAttribute('normal');
       return geo;
     });
 
-    const merged = mergeGeometries(sanitizedGeometries, false);
+    let merged = sanitizedGeometries[0];
+    const additions = sanitizedGeometries.slice(1);
+
+    // Only run heavy CSG union for export. For live rendering, just merge.
+    if (this.isExport && additions.length > 0) {
+      const baseBrush = new Brush(geometriesToMerge[0]); // The hollowed out box
+      const evaluator = new Evaluator();
+      evaluator.useGroups = false;
+
+      const mergedAdditions = mergeGeometries(additions, false);
+      const additionsBrush = new Brush(mergedAdditions);
+      const unionResult = evaluator.evaluate(baseBrush, additionsBrush, 0); // 0 = ADDITION
+      merged = unionResult.geometry;
+    } else if (additions.length > 0) {
+      merged = mergeGeometries(sanitizedGeometries, false);
+    }
+    
     if (!merged) {
       console.error("Failed to merge Klemmbrick geometries.");
       return new THREE.BufferGeometry();

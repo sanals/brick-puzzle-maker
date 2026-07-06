@@ -1,14 +1,17 @@
 'use client';
 
 import React, { useRef, useState, useMemo, useEffect } from 'react';
-import { RotateCcw, Undo2, Redo2 } from 'lucide-react';
-import { usePuzzleStore, MaterialProfile } from '@/store/usePuzzleStore';
-import { ProcessingMode, ProcessRequest, ProcessResponse, WorkerOutbound } from '@/lib/types';
+import { RotateCcw, Undo2, Redo2, Eye, EyeOff, LayoutGrid, Palette, ImageUp, RefreshCw } from 'lucide-react';
+import { usePuzzleStore } from '@/store/usePuzzleStore';
+import { MaterialProfile } from '@/store/usePuzzleStore';
 import { exportChunkedBaseplates } from '@/lib/export/chunk-exporter';
-import { exportMosaicBatches } from '@/lib/export/mosaic-exporter';
-import { build3MF } from '@/lib/export/generic-3mf-exporter';
-import { BaseplateGenerator } from '@/lib/geometry/baseplate-generator';
 import { calculateTolerances } from '@/lib/math/tolerances';
+import { BaseplateGenerator } from '@/lib/geometry/baseplate-generator';
+import { build3MF } from '@/lib/export/generic-3mf-exporter';
+import { exportMosaicBatches } from '@/lib/export/mosaic-exporter';
+import { ProcessingMode, ProcessRequest, ProcessResponse, WorkerOutbound } from '@/lib/types';
+import { CropModal } from './CropModal';
+import { CROP_RATIOS, CropRatio, BasePlateSize, ScaleMultiplier } from '@/lib/types';
 import { BrickOptimizer } from '@/lib/geometry/brick-optimizer';
 
 export function SidebarControls() {
@@ -25,19 +28,47 @@ export function SidebarControls() {
     explodedView, setExplodedView,
     optimizePieces, setOptimizePieces,
     allowNonStandardSizes, setAllowNonStandardSizes,
+    connectorHoleDiameter, setConnectorHoleDiameter,
+    connectorHoleDepth, setConnectorHoleDepth,
     showBaseplate, setShowBaseplate,
     showBricks, setShowBricks,
+    baseChunkSize, setBaseChunkSize,
+    borderWidth, setBorderWidth,
     undo, redo, history, historyIndex,
     paintMode, setPaintMode,
     customBricks, setCustomBricks,
+    cropRatio, setCropRatio,
+    basePlateSize, setBasePlateSize,
+    scaleMultiplier, setScaleMultiplier,
     setupStep, setSetupStep, resetToSetup
   } = usePuzzleStore();
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  
   const [processingMode, setProcessingMode] = useState<ProcessingMode>('nearest-lego');
-  const [imageFitMode, setImageFitMode] = useState<'stretch' | 'fit'>('stretch');
+  const [isProcessing, setIsProcessing] = useState(false);
   const [uploadedImageSrc, setUploadedImageSrc] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const maxRatioDim = Math.max(cropRatio.w, cropRatio.h);
+  const maxMultiplier = Math.max(1, Math.floor(6 / maxRatioDim));
+
+  // Ensure multiplier is within bounds
+  useEffect(() => {
+    if (scaleMultiplier > maxMultiplier) {
+      setScaleMultiplier(maxMultiplier as ScaleMultiplier);
+    }
+  }, [scaleMultiplier, maxMultiplier, setScaleMultiplier]);
+
+  // Update dimensions when parameters change
+  useEffect(() => {
+    const w = scaleMultiplier * basePlateSize * cropRatio.w;
+    const l = scaleMultiplier * basePlateSize * cropRatio.h;
+    if (width !== w) setWidth(w);
+    if (length !== l) setLength(l);
+    if (baseChunkSize !== basePlateSize) setBaseChunkSize(basePlateSize);
+  }, [cropRatio, basePlateSize, scaleMultiplier, width, length, baseChunkSize, setWidth, setLength, setBaseChunkSize]);
 
   // Handle Keyboard Shortcuts for Undo/Redo
   useEffect(() => {
@@ -106,8 +137,29 @@ export function SidebarControls() {
       const isHeightmap = voxelMatrix?.cells[0]?.[0]?.height !== undefined;
 
       if (!isHeightmap && voxelMatrix) {
-        // Mosaic Mode: Export ZIP with separated color files
-        blob = await exportMosaicBatches(width, length, tolerances.snapFit, voxelMatrix);
+        let optimizedBricks = customBricks;
+        if (!optimizedBricks) {
+          const { BrickOptimizer } = await import('@/lib/geometry/brick-optimizer');
+          const optimizer = new BrickOptimizer(voxelMatrix, width, length);
+          optimizedBricks = optimizer.optimize({
+            allowNonStandardSizes: allowNonStandardSizes
+          });
+        }
+        
+        // If optimization is turned off, manually convert all to 1x1 bricks
+        if (!optimizePieces) {
+          optimizedBricks = [];
+          for (let x = 0; x < width; x++) {
+            for (let z = 0; z < length; z++) {
+              const cell = voxelMatrix.cells[x]?.[z];
+              if (cell?.hexColor) {
+                optimizedBricks.push({ x, z, width: 1, length: 1, hexColor: cell.hexColor });
+              }
+            }
+          }
+        }
+        
+        blob = await exportMosaicBatches(width, length, tolerances.snapFit, voxelMatrix, optimizedBricks, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -117,7 +169,7 @@ export function SidebarControls() {
       } else {
         // Heightmap Mode
         if (width > 16 || length > 16) {
-          blob = await exportChunkedBaseplates(width, length, tolerances.snapFit, voxelMatrix, 16);
+          blob = await exportChunkedBaseplates(width, length, tolerances.snapFit, voxelMatrix, 16, connectorHoleDiameter, connectorHoleDepth);
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -126,7 +178,11 @@ export function SidebarControls() {
           URL.revokeObjectURL(url);
         } else {
           // Single baseplate
-          const gen = new BaseplateGenerator(width, length, tolerances.snapFit, 1/3, voxelMatrix);
+          const gen = new BaseplateGenerator(
+            width, length, tolerances.snapFit, 1.0, voxelMatrix,
+            false, false, false, false,
+            connectorHoleDiameter, connectorHoleDepth
+          );
           const geo = gen.generateGeometry();
           blob = await build3MF(geo);
           const url = URL.createObjectURL(blob);
@@ -145,15 +201,21 @@ export function SidebarControls() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleSelectedFile = (file: File) => {
+    if (!file.type.match(/image\/(png|jpeg|jpg)/)) return;
+    setFileName(file.name);
+    setCropFile(file);
+  };
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setUploadedImageSrc(ev.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+  const handleCropComplete = (dataUrl: string, ratio: CropRatio) => {
+    setCropRatio(ratio);
+    setUploadedImageSrc(dataUrl);
+    setCropFile(null);
+  };
+
+  const handleCropCancel = () => {
+    setCropFile(null);
+    setFileName(null);
   };
 
   // Trigger image processing whenever source or dimensions change
@@ -174,7 +236,7 @@ export function SidebarControls() {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, width, length);
 
-      if (imageFitMode === 'fit') {
+      if (processingMode === 'heightmap') {
         const scale = Math.min(width / img.width, length / img.height);
         const x = (width - img.width * scale) / 2;
         const y = (length - img.height * scale) / 2;
@@ -216,62 +278,143 @@ export function SidebarControls() {
       worker.postMessage(request);
     };
     img.src = uploadedImageSrc;
-  }, [width, length, processingMode, imageFitMode, uploadedImageSrc, setupStep, setVoxelMatrix, setActivePaintColor]);
+  }, [width, length, processingMode, uploadedImageSrc, setupStep, setVoxelMatrix, setActivePaintColor]);
 
   return (
     <div className="w-80 bg-zinc-900 text-zinc-100 flex flex-col h-screen border-r border-zinc-800">
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
         <h2 className="text-xl font-bold text-white tracking-tight">Brick Generator</h2>
       
+      {cropFile && (
+        <CropModal
+          file={cropFile}
+          onCancel={handleCropCancel}
+          onComplete={handleCropComplete}
+        />
+      )}
+
       {setupStep === 1 && (
         <>
-          {/* Dimensions */}
+          {/* Design Layout */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Dimensions</h3>
-              <button 
-                onClick={() => { setWidth(16); setLength(16); }}
-                className="p-1 text-zinc-500 hover:text-white transition-colors"
-                title="Reset Dimensions"
-              >
-                <RotateCcw size={14} />
-              </button>
+              <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Design Setup</h3>
             </div>
             
-            <div className="space-y-2">
-              <label className="flex justify-between text-sm">
-                <span>Width (studs)</span>
-                <span className="text-blue-400 font-mono">{width}</span>
-              </label>
+            <div className="flex flex-col gap-2">
               <input
-                type="range"
-                min={1}
-                max={96}
-                value={width}
-                onChange={(e) => setWidth(Number(e.target.value))}
-                className="w-full accent-blue-500"
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleSelectedFile(file);
+                  e.target.value = "";
+                }}
               />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleSelectedFile(file);
+                }}
+                className={`group relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
+                  dragging ? "border-blue-500 bg-blue-500/10" : "border-zinc-700 bg-zinc-800/40 hover:border-blue-500/60 hover:bg-zinc-800/70"
+                }`}
+              >
+                {uploadedImageSrc ? (
+                  <img
+                    src={uploadedImageSrc}
+                    alt={fileName ? `Preview of ${fileName}` : "Uploaded preview"}
+                    className="absolute inset-0 size-full object-contain opacity-90 p-2"
+                  />
+                ) : (
+                  <>
+                    <span className="flex size-12 items-center justify-center rounded-full bg-blue-500/10 text-blue-400">
+                      <ImageUp className="size-6" />
+                    </span>
+                    <span className="text-sm font-medium">Drop a photo here</span>
+                    <span className="text-xs text-zinc-500">PNG or JPEG</span>
+                  </>
+                )}
+              </button>
+
+              {fileName && (
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-zinc-800/60 px-3 py-2 mt-1">
+                  <span className="truncate text-xs text-zinc-400" title={fileName}>
+                    {fileName}
+                  </span>
+                  <button
+                    className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                    onClick={() => {
+                      setUploadedImageSrc(null);
+                      setFileName(null);
+                    }}
+                  >
+                    <RefreshCw size={12} /> Replace
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            <div className="space-y-3 pt-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                Physical Base Plate
+              </label>
+              <div className="flex bg-zinc-800 p-1 rounded-md border border-zinc-700">
+                <button
+                  onClick={() => setBasePlateSize(16)}
+                  className={`flex-1 text-xs py-1.5 rounded-sm transition-colors ${basePlateSize === 16 ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:bg-zinc-700 hover:text-white'}`}
+                >
+                  16x16
+                </button>
+                <button
+                  onClick={() => setBasePlateSize(24)}
+                  className={`flex-1 text-xs py-1.5 rounded-sm transition-colors ${basePlateSize === 24 ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:bg-zinc-700 hover:text-white'}`}
+                >
+                  24x24
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="flex justify-between text-sm">
-                <span>Length (studs)</span>
-                <span className="text-blue-400 font-mono">{length}</span>
+            <div className="space-y-3 pt-1">
+              <label className="flex items-center gap-2 text-sm font-medium text-zinc-400">
+                Resolution (Blocks)
               </label>
-              <input
-                type="range"
-                min={1}
-                max={96}
-                value={length}
-                onChange={(e) => setLength(Number(e.target.value))}
-                className="w-full accent-blue-500"
-              />
+              <div className="grid grid-cols-3 gap-1.5 w-full">
+                {Array.from({ length: maxMultiplier }).map((_, i) => {
+                  const m = (i + 1) as ScaleMultiplier;
+                  const w = m * basePlateSize * cropRatio.w;
+                  const h = m * basePlateSize * cropRatio.h;
+                  const isSelected = m === scaleMultiplier;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => setScaleMultiplier(m)}
+                      disabled={maxMultiplier === 1}
+                      className={`h-9 px-2 text-xs font-medium border rounded transition-colors ${
+                        isSelected 
+                          ? 'bg-blue-600 border-blue-600 text-white' 
+                          : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                      }`}
+                    >
+                      {w} × {h}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
           <hr className="border-zinc-800" />
 
-          {/* Image & Paint Setup */}
+          {/* Setup / Process */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Generate Puzzle</h3>
@@ -291,37 +434,29 @@ export function SidebarControls() {
                 <option value="heightmap">Topographic Heightmap</option>
               </select>
             </div>
-
+            
             <div className="space-y-2">
-              <label className="flex justify-between text-sm text-zinc-300">
-                <span>Image Fit Mode</span>
+              <label className="flex justify-between text-sm">
+                <span>Border Frame Width</span>
+                <span className="text-blue-400 font-mono">{borderWidth}</span>
               </label>
-              <select
-                value={imageFitMode}
-                onChange={(e) => setImageFitMode(e.target.value as 'stretch' | 'fit')}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm focus:outline-none focus:border-blue-500"
-              >
-                <option value="stretch">Stretch to fill board</option>
-                <option value="fit">Fit keeping aspect ratio</option>
-              </select>
-            </div>
-
-            <div className="space-y-2 pt-2">
-              <input 
-                type="file" 
-                accept="image/*" 
-                ref={fileInputRef} 
-                className="hidden" 
-                onChange={handleImageUpload}
+              <input
+                type="range"
+                min={0}
+                max={8}
+                step={1}
+                value={borderWidth}
+                onChange={(e) => setBorderWidth(Number(e.target.value))}
+                className="w-full accent-blue-500"
               />
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isProcessing}
-                className="w-full bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-800 text-white rounded p-3 text-sm font-medium transition-colors"
-              >
-                {isProcessing ? 'Processing Image...' : (uploadedImageSrc ? 'Upload Different Image' : 'Upload Image')}
-              </button>
+              <p className="text-[10px] text-zinc-500">Adds an empty frame around your mosaic design.</p>
             </div>
+            
+            {isProcessing && (
+              <div className="text-center text-xs text-blue-400 mt-2 animate-pulse">
+                Processing Image...
+              </div>
+            )}
           </div>
         </>
       )}
@@ -586,6 +721,40 @@ export function SidebarControls() {
                 className="w-full accent-blue-500"
               />
             </div>
+            
+            <div className="space-y-2">
+              <label className="flex justify-between text-sm items-center">
+                <span>Technic Hole Diameter</span>
+                <span className="text-blue-400 font-mono">{connectorHoleDiameter.toFixed(1)}mm</span>
+              </label>
+              <input
+                type="range"
+                min={4.5}
+                max={6.0}
+                step={0.1}
+                value={connectorHoleDiameter}
+                onChange={(e) => setConnectorHoleDiameter(Number(e.target.value))}
+                className="w-full accent-blue-500"
+              />
+              <p className="text-[10px] text-zinc-500 leading-tight">Increase if standard pins fit too tightly. 5.1mm is default for FDM.</p>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="flex justify-between text-sm items-center">
+                <span>Technic Hole Depth</span>
+                <span className="text-blue-400 font-mono">{connectorHoleDepth.toFixed(1)}mm</span>
+              </label>
+              <input
+                type="range"
+                min={4.0}
+                max={12.0}
+                step={0.5}
+                value={connectorHoleDepth}
+                onChange={(e) => setConnectorHoleDepth(Number(e.target.value))}
+                className="w-full accent-blue-500"
+              />
+              <p className="text-[10px] text-zinc-500 leading-tight">Depth of the hole into the baseplate block. 8.5mm fits a standard pin half.</p>
+            </div>
           </div>
 
           <hr className="border-zinc-800 mt-6 mb-4" />
@@ -649,7 +818,7 @@ export function SidebarControls() {
                 // Generate a blank canvas
                 const blankMatrix = {
                   width, height: length, depth: 1,
-                  palette: [{ hex: "#ffffff", label: "White", index: 0, count: width * length }],
+                  palette: [{ hex: "#ffffff", label: "White", index: 0, count: width * length, rgb: [255, 255, 255] as [number, number, number], coverage: 1 }],
                   cells: Array(width).fill(0).map(() => Array(length).fill({
                     hexColor: "#ffffff", label: "White", colorIndex: 0
                   }))

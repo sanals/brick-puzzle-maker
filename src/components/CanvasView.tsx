@@ -5,10 +5,43 @@ import { Canvas, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
 import { BaseplateGenerator } from '@/lib/geometry/baseplate-generator';
 import { BrickGenerator } from '@/lib/geometry/brick-generator';
-import { BrickOptimizer } from '@/lib/geometry/brick-optimizer';
+import { BrickOptimizer, OptimizedBrick } from '@/lib/geometry/brick-optimizer';
+import { KlemmbrickGenerator } from '@/lib/geometry/klemmbrick-generator';
 import { calculateTolerances, STUD_PITCH } from '@/lib/math/tolerances';
 import { usePuzzleStore, MaterialProfile } from '@/store/usePuzzleStore';
 import * as THREE from 'three';
+
+// Helper component to safely render InstancedMesh without NaN warnings on first frame
+function BrickGroup({ group }: { group: any }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  React.useEffect(() => {
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true;
+      if (meshRef.current.instanceColor) {
+        meshRef.current.instanceColor.needsUpdate = true;
+      }
+      meshRef.current.computeBoundingSphere();
+    }
+  }, [group]);
+
+  return (
+    <instancedMesh 
+      ref={meshRef}
+      args={[group.geometry, undefined, group.count]}
+      castShadow 
+      receiveShadow
+    >
+      <meshStandardMaterial 
+        vertexColors={false}
+        roughness={0.2}
+        metalness={0.1} 
+      />
+      <instancedBufferAttribute attach="instanceMatrix" args={[group.matrices, 16]} />
+      <instancedBufferAttribute attach="instanceColor" args={[group.colors, 3]} />
+    </instancedMesh>
+  );
+}
 
 interface CanvasViewProps {
   width: number;
@@ -32,11 +65,13 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     optimizePieces,
     allowNonStandardSizes,
     showBaseplate,
-    showBricks
+    showBricks,
+    baseChunkSize,
+    borderWidth,
+    connectorHoleDiameter,
+    connectorHoleDepth
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
-  const [isPainting, setIsPainting] = useState(false);
-  const [editDragStart, setEditDragStart] = useState<{x: number, z: number, localX: number, localZ: number} | null>(null);
   const [hoverAction, setHoverAction] = useState<{
     type: 'cut' | 'join';
     axis: 'x' | 'z';
@@ -51,73 +86,189 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     dominantSide?: -1 | 1;
   } | null>(null);
 
-  // Memoize the geometry generation so it only recalculates when params change
-  const { baseGeometry, bricksGeometry } = useMemo(() => {
+  // Memoize the geometry generation for baseplates
+  const baseplateChunks = useMemo(() => {
     const tolerances = calculateTolerances(materialProfile, snapFit);
-    
-    // Check if it's a heightmap by looking at the first cell
     const isHeightmap = voxelMatrix?.cells[0]?.[0]?.height !== undefined;
-
-    // For a Heightmap, we want the baseplate to use the matrix to generate columns.
-    // For a Mosaic, the baseplate is neutral (no matrix) and bricks sit on top.
-    const baseGenerator = new BaseplateGenerator(
-      width, 
-      length, 
-      tolerances.snapFit, 
-      1/3, 
-      isHeightmap ? voxelMatrix : null
-    );
     
-    const baseGeo = baseGenerator.generateGeometry();
+    const totalWidth = width + 2 * borderWidth;
+    const totalLength = length + 2 * borderWidth;
+    
+    // If it's a heightmap AND there's no splitting/border, we can pass the matrix.
+    // Otherwise, we just generate flat baseplates for mosaics.
+    const passMatrix = isHeightmap && baseChunkSize === 0 && borderWidth === 0;
 
-    let bricksGeo = null;
-    // Generate separate 1x1 bricks if it's a mosaic
-    if (voxelMatrix && !isHeightmap) {
-      const brickGen = new BrickGenerator(
-        width, 
-        length, 
-        tolerances.snapFit, 
-        voxelMatrix, 
-        undefined,
-        optimizePieces,
-        allowNonStandardSizes,
-        customBricks || undefined
+    const chunks = [];
+    
+    if (baseChunkSize === 0) {
+      const gen = new BaseplateGenerator(
+        totalWidth, totalLength, tolerances.snapFit, 1, passMatrix ? voxelMatrix : null,
+        true, true, true, true,
+        connectorHoleDiameter, connectorHoleDepth
       );
-      const generatedGeo = brickGen.generateGeometry();
-      if (generatedGeo.attributes.position && generatedGeo.attributes.position.count > 0) {
-         bricksGeo = generatedGeo;
+      chunks.push({ geometry: gen.generateGeometry(), position: [0, 0, 0] as [number, number, number] });
+    } else {
+      const numX = Math.ceil(totalWidth / baseChunkSize);
+      const numZ = Math.ceil(totalLength / baseChunkSize);
+      
+      const wallPlay = 0.2;
+      const overallTotalWidth = totalWidth * STUD_PITCH - wallPlay;
+      const overallTotalLength = totalLength * STUD_PITCH - wallPlay;
+      const startX = -overallTotalWidth / 2;
+      const startZ = -overallTotalLength / 2;
+
+      for (let x = 0; x < numX; x++) {
+        for (let z = 0; z < numZ; z++) {
+          const chunkW = (x === numX - 1 && totalWidth % baseChunkSize !== 0) ? totalWidth % baseChunkSize : baseChunkSize;
+          const chunkL = (z === numZ - 1 && totalLength % baseChunkSize !== 0) ? totalLength % baseChunkSize : baseChunkSize;
+          
+          const gen = new BaseplateGenerator(
+            chunkW, chunkL, tolerances.snapFit, 1, null, 
+            true, true, true, true,
+            connectorHoleDiameter, connectorHoleDepth
+          );
+          const geom = gen.generateGeometry();
+          
+          const chunkOverallW = chunkW * STUD_PITCH - wallPlay;
+          const chunkOverallL = chunkL * STUD_PITCH - wallPlay;
+          
+          const chunkStartX = startX + (x * baseChunkSize * STUD_PITCH);
+          const chunkStartZ = startZ + (z * baseChunkSize * STUD_PITCH);
+          
+          const cx = chunkStartX + chunkOverallW / 2;
+          const cz = chunkStartZ + chunkOverallL / 2;
+          
+          chunks.push({ geometry: geom, position: [cx, 0, cz] as [number, number, number] });
+        }
+      }
+    }
+    
+    return chunks;
+  }, [width, length, materialProfile, snapFit, voxelMatrix?.cells[0]?.[0]?.height, baseChunkSize, borderWidth, connectorHoleDiameter, connectorHoleDepth]);
+
+  const instancedBricks = useMemo(() => {
+    const tolerances = calculateTolerances(materialProfile, snapFit);
+    const isHeightmap = voxelMatrix?.cells[0]?.[0]?.height !== undefined;
+    let instancedGroups = null;
+
+    // Generate separate bricks if it's a mosaic
+    if (voxelMatrix && !isHeightmap) {
+      let optimizedBricks = customBricks;
+      if (!optimizedBricks) {
+        const optimizer = new BrickOptimizer(voxelMatrix, width, length);
+        optimizedBricks = optimizer.optimize({
+          allowNonStandardSizes: allowNonStandardSizes
+        });
+      }
+      
+      // If optimization is turned off, manually convert all to 1x1 bricks
+      if (!optimizePieces) {
+        optimizedBricks = [];
+        for (let x = 0; x < width; x++) {
+          for (let z = 0; z < length; z++) {
+            const cell = voxelMatrix.cells[x]?.[z];
+            if (cell?.hexColor) {
+              optimizedBricks.push({ x, z, width: 1, length: 1, hexColor: cell.hexColor });
+            }
+          }
+        }
+      }
+
+      // Group by WxL
+      const groups = new Map<string, OptimizedBrick[]>();
+      for (const brick of optimizedBricks) {
+         const key = `${brick.width}x${brick.length}`;
+         if (!groups.has(key)) groups.set(key, []);
+         groups.get(key)!.push(brick);
+      }
+
+      const wallPlay = 0.2;
+      const totalWidth = width + 2 * borderWidth;
+      const totalLength = length + 2 * borderWidth;
+      
+      const overallTotalWidth = totalWidth * STUD_PITCH - wallPlay;
+      const overallTotalLength = totalLength * STUD_PITCH - wallPlay;
+      
+      // Start position is the top-left of the entire bordered baseplate, PLUS the border width offset
+      const startX = -overallTotalWidth / 2 + (STUD_PITCH / 2) - (wallPlay / 2) + (borderWidth * STUD_PITCH);
+      const startZ = -overallTotalLength / 2 + (STUD_PITCH / 2) - (wallPlay / 2) + (borderWidth * STUD_PITCH);
+
+      instancedGroups = [];
+      const dummy = new THREE.Object3D();
+      const color = new THREE.Color();
+
+      for (const [key, bricks] of groups.entries()) {
+         const [w, l] = key.split('x').map(Number);
+         const gen = new KlemmbrickGenerator(w, l, tolerances.snapFit, 1/3);
+         const geometry = gen.generateGeometry();
+         
+         if (geometry.attributes.position) {
+           const posArray = geometry.attributes.position.array as Float32Array;
+           for (let i = 0; i < posArray.length; i++) {
+             if (isNaN(posArray[i])) {
+               console.error(`NaN found in KlemmbrickGenerator geometry for ${w}x${l} at index ${i}`);
+               break;
+             }
+           }
+         }
+
+         const matrixArray = new Float32Array(bricks.length * 16);
+         const colorArray = new Float32Array(bricks.length * 3);
+         
+         bricks.forEach((brick, i) => {
+            const centerX = startX + brick.x * STUD_PITCH + ((brick.width - 1) * STUD_PITCH) / 2;
+            const centerZ = startZ + brick.z * STUD_PITCH + ((brick.length - 1) * STUD_PITCH) / 2;
+            
+            if (isNaN(centerX) || isNaN(centerZ)) {
+              console.error(`NaN found in brick coordinates: x=${brick.x}, z=${brick.z}, width=${brick.width}, length=${brick.length}`);
+            }
+
+            dummy.position.set(centerX, 9.6, centerZ);
+            dummy.updateMatrix();
+            dummy.matrix.toArray(matrixArray, i * 16);
+            
+            color.set(brick.hexColor);
+            color.toArray(colorArray, i * 3);
+         });
+         
+         instancedGroups.push({
+            key,
+            geometry,
+            count: bricks.length,
+            matrices: matrixArray,
+            colors: colorArray
+         });
       }
     }
 
-    return { baseGeometry: baseGeo, bricksGeometry: bricksGeo };
-  }, [width, length, materialProfile, snapFit, voxelMatrix, customBricks, optimizePieces, allowNonStandardSizes]);
+    return instancedGroups;
+  }, [width, length, materialProfile, snapFit, voxelMatrix, customBricks, optimizePieces, allowNonStandardSizes, borderWidth]);
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
-    if (e.button !== 0) return; // Only process left click
-    e.stopPropagation(); // Stop orbit controls if painting or editing
-    if (paintMode === 'edit') {
-      const coords = getGridCoords(e.point);
-      if (coords) setEditDragStart(coords);
-    } else if (activePaintColor) {
-      if (paintMode === 'stud') {
-        setIsPainting(true);
-        commitHistory(); // Save state before stroke begins
-        paintAtPoint(e.point);
-      }
-    }
+    // Let OrbitControls handle mouse down for rotation/panning.
+    // Do not stop propagation here.
   };
 
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     if (e.button !== 0) return; // Only process left click
-    if (paintMode === 'brick' && activePaintColor) {
+    
+    // R3F onClick only fires if the user clicks and releases WITHOUT dragging.
+    // So this won't fire at the end of a camera rotation drag!
+    
+    if (paintMode === 'edit') {
+      if (hoverAction) {
+        e.stopPropagation();
+        executeHoverAction(hoverAction);
+      }
+    } else if (activePaintColor) {
       e.stopPropagation();
-      commitHistory(); // Save state for undo
+      commitHistory(); // Save state before stroke
       paintAtPoint(e.point);
     }
   };
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
-    if (paintMode === 'edit' && !editDragStart) {
+    if (paintMode === 'edit') {
       const coords = getGridCoords(e.point);
       if (coords) {
         const action = getHoverAction(coords);
@@ -125,38 +276,31 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
       } else {
         setHoverAction(null);
       }
-    } else if (paintMode === 'edit' && editDragStart) {
-      setHoverAction(null);
-    } else if (isPainting && activePaintColor && paintMode === 'stud') {
-      e.stopPropagation();
-      paintAtPoint(e.point);
     } else {
       setHoverAction(null);
     }
   };
 
   const handlePointerUp = (e?: ThreeEvent<PointerEvent>) => {
-    setIsPainting(false);
-    if (e && paintMode === 'edit' && editDragStart && customBricks) {
-      e.stopPropagation();
-      const endCoords = getGridCoords(e.point);
-      if (endCoords) {
-        handleEditAction(editDragStart, endCoords, e.point);
-      }
-      setEditDragStart(null);
-    }
+    // Nothing needed
   };
 
   const getGridCoords = (point: THREE.Vector3) => {
     const wallPlay = 0.2;
-    const overallWidth = width * STUD_PITCH - wallPlay;
-    const overallLength = length * STUD_PITCH - wallPlay;
+    const totalWidth = width + 2 * borderWidth;
+    const totalLength = length + 2 * borderWidth;
     
-    const localX = point.x + overallWidth / 2;
-    const localZ = point.z + overallLength / 2;
+    const overallTotalWidth = totalWidth * STUD_PITCH - wallPlay;
+    const overallTotalLength = totalLength * STUD_PITCH - wallPlay;
     
-    const xIndex = Math.floor(localX / STUD_PITCH);
-    const zIndex = Math.floor(localZ / STUD_PITCH);
+    const localX = point.x + overallTotalWidth / 2;
+    const localZ = point.z + overallTotalLength / 2;
+    
+    const globalXIndex = Math.floor(localX / STUD_PITCH);
+    const globalZIndex = Math.floor(localZ / STUD_PITCH);
+    
+    const xIndex = globalXIndex - borderWidth;
+    const zIndex = globalZIndex - borderWidth;
     
     if (xIndex >= 0 && xIndex < width && zIndex >= 0 && zIndex < length) {
       return { x: xIndex, z: zIndex, localX, localZ };
@@ -236,108 +380,49 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     return null;
   };
 
-  const handleEditAction = (
-    start: {x: number, z: number, localX: number, localZ: number}, 
-    end: {x: number, z: number, localX: number, localZ: number},
-    point: THREE.Vector3
-  ) => {
-    const startBrickIndex = customBricks!.findIndex(b => 
-      start.x >= b.x && start.x < b.x + b.width &&
-      start.z >= b.z && start.z < b.z + b.length
-    );
-    const endBrickIndex = customBricks!.findIndex(b => 
-      end.x >= b.x && end.x < b.x + b.width &&
-      end.z >= b.z && end.z < b.z + b.length
-    );
-
-    // If click or drag is entirely within the SAME cell or adjacent, treat it as a precise CUT or JOIN
-    if ((startBrickIndex !== -1 && startBrickIndex === endBrickIndex) || (start.x === end.x && start.z === end.z)) {
-      const action = getHoverAction(start); // Use START coords for accuracy
-      if (!action) return;
+  const executeHoverAction = (action: any) => {
+    if (!customBricks) return;
+    
+    if (action.type === 'cut') {
+      const { axis: cutAxis, index: cutIndex, brick, brickIndex } = action;
+      if (cutAxis === 'x' && cutIndex > brick.x && cutIndex < brick.x + brick.width) {
+        const leftWidth = cutIndex - brick.x;
+        const rightWidth = brick.width - leftWidth;
+        const newBricks = [...customBricks];
+        newBricks.splice(brickIndex, 1, 
+          { ...brick, width: leftWidth },
+          { ...brick, x: cutIndex, width: rightWidth }
+        );
+        setCustomBricks(newBricks);
+      } else if (cutAxis === 'z' && cutIndex > brick.z && cutIndex < brick.z + brick.length) {
+        const topLength = cutIndex - brick.z;
+        const bottomLength = brick.length - topLength;
+        const newBricks = [...customBricks];
+        newBricks.splice(brickIndex, 1, 
+          { ...brick, length: topLength },
+          { ...brick, z: cutIndex, length: bottomLength }
+        );
+        setCustomBricks(newBricks);
+      }
+    } else if (action.type === 'join') {
+      const { brick1, brick2, brick1Index, brick2Index, dominantBrick } = action;
+      const newBricks = [...customBricks];
       
-      if (action.type === 'cut') {
-        const { axis: cutAxis, index: cutIndex, brick, brickIndex } = action;
-        if (cutAxis === 'x' && cutIndex > brick.x && cutIndex < brick.x + brick.width) {
-          const leftWidth = cutIndex - brick.x;
-          const rightWidth = brick.width - leftWidth;
-          const newBricks = [...customBricks!];
-          newBricks.splice(brickIndex!, 1, 
-            { ...brick, width: leftWidth },
-            { ...brick, x: cutIndex, width: rightWidth }
-          );
-          setCustomBricks(newBricks);
-        } else if (cutAxis === 'z' && cutIndex > brick.z && cutIndex < brick.z + brick.length) {
-          const topLength = cutIndex - brick.z;
-          const bottomLength = brick.length - topLength;
-          const newBricks = [...customBricks!];
-          newBricks.splice(brickIndex!, 1, 
-            { ...brick, length: topLength },
-            { ...brick, z: cutIndex, length: bottomLength }
-          );
-          setCustomBricks(newBricks);
-        }
-      } else if (action.type === 'join') {
-        const { brick1, brick2, brick1Index, brick2Index, dominantBrick } = action;
-        const newBricks = [...customBricks!];
-        
-        // Remove larger index first to avoid shifting issues
-        const i1 = Math.max(brick1Index!, brick2Index!);
-        const i2 = Math.min(brick1Index!, brick2Index!);
-        newBricks.splice(i1, 1);
-        newBricks.splice(i2, 1);
+      // Remove larger index first to avoid shifting issues
+      const i1 = Math.max(brick1Index, brick2Index);
+      const i2 = Math.min(brick1Index, brick2Index);
+      newBricks.splice(i1, 1);
+      newBricks.splice(i2, 1);
 
-        newBricks.push({
-          x: Math.min(brick1.x, brick2.x),
-          z: Math.min(brick1.z, brick2.z),
-          width: action.axis === 'x' ? brick1.width + brick2.width : brick1.width,
-          length: action.axis === 'z' ? brick1.length + brick2.length : brick1.length,
-          hexColor: dominantBrick.hexColor // Inherit color from dominant brick
-        });
-        
-        setCustomBricks(newBricks);
-      }
-    } 
-    // If drag spans multiple cells, it's a JOIN (Bounding Box Merge)
-    else {
-      const minX = Math.min(start.x, end.x);
-      const maxX = Math.max(start.x, end.x);
-      const minZ = Math.min(start.z, end.z);
-      const maxZ = Math.max(start.z, end.z);
-
-      // Find all bricks completely inside the bounding box
-      const intersectedIndices: number[] = [];
-      let validJoin = true;
-      let firstColor = "";
-
-      for (let i = 0; i < customBricks!.length; i++) {
-        const b = customBricks![i];
-        // Check if brick overlaps the bounding box at all
-        const overlapX = b.x < maxX + 1 && b.x + b.width > minX;
-        const overlapZ = b.z < maxZ + 1 && b.z + b.length > minZ;
-
-        if (overlapX && overlapZ) {
-          // If it overlaps, it MUST be fully contained within the bounding box
-          if (b.x < minX || b.x + b.width > maxX + 1 || b.z < minZ || b.z + b.length > maxZ + 1) {
-            validJoin = false; // Bounding box cuts through a brick
-            break;
-          }
-          intersectedIndices.push(i);
-          if (intersectedIndices.length === 1) firstColor = b.hexColor;
-        }
-      }
-
-      if (validJoin && intersectedIndices.length > 1) {
-        // Remove old bricks and add the merged one
-        const newBricks = customBricks!.filter((_, i) => !intersectedIndices.includes(i));
-        newBricks.push({
-          x: minX,
-          z: minZ,
-          width: maxX - minX + 1,
-          length: maxZ - minZ + 1,
-          hexColor: firstColor
-        });
-        setCustomBricks(newBricks);
-      }
+      newBricks.push({
+        x: Math.min(brick1.x, brick2.x),
+        z: Math.min(brick1.z, brick2.z),
+        width: action.axis === 'x' ? brick1.width + brick2.width : brick1.width,
+        length: action.axis === 'z' ? brick1.length + brick2.length : brick1.length,
+        hexColor: dominantBrick.hexColor // Inherit color from dominant brick
+      });
+      
+      setCustomBricks(newBricks);
     }
   };
 
@@ -385,9 +470,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     >
       <Canvas 
         camera={{ position: [50, 50, 50], fov: 45 }}
-        onPointerUp={() => setIsPainting(false)}
         onPointerLeave={() => {
-          setIsPainting(false);
           setHoverAction(null);
         }}
       >
@@ -403,42 +486,30 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         <Environment preset="city" />
 
         {/* Baseplate Mesh */}
-        {showBaseplate && (
+        {showBaseplate && baseplateChunks.map((chunk, index) => (
           <mesh 
-            geometry={baseGeometry} 
-            castShadow 
-            receiveShadow
+            key={index} 
+            geometry={chunk.geometry} 
+            position={chunk.position}
             onClick={handleClick}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
           >
             <meshStandardMaterial 
+              color="#3b82f6" 
               vertexColors={true}
-              roughness={0.4} 
-              metalness={0.1} 
+              roughness={0.8}
+              metalness={0.2}
             />
           </mesh>
-        )}
+        ))}
 
-        {/* 1x1 Mosaic Bricks Mesh */}
-        {showBricks && bricksGeometry && (
-          <group position={[0, explodedView ? 5.0 : 0, 0]}>
-            <mesh 
-              geometry={bricksGeometry} 
-              castShadow 
-              receiveShadow
-              onClick={handleClick}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-            >
-              <meshStandardMaterial 
-                vertexColors={true}
-                roughness={0.2} // Slightly smoother for tiles/plates
-                metalness={0.1} 
-              />
-            </mesh>
+        {/* Instanced Mosaic Bricks Mesh */}
+        {showBricks && instancedBricks && (
+          <group position={[0, explodedView ? 5.0 : 0, 0]} onClick={handleClick} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp}>
+            {instancedBricks.map((group) => (
+              <BrickGroup key={group.key} group={group} />
+            ))}
             {/* Simple Cut/Join Line Preview */}
             {hoverAction && (
               <group
@@ -543,14 +614,23 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           makeDefault 
           enablePan={true}
           enableZoom={true}
-          enableRotate={!isPainting && !editDragStart} 
+          enableRotate={true} 
           minPolarAngle={0} 
         />
       </Canvas>
       
       {/* Temporary Stats UI overlay (for performance metrics in the future) */}
       <div className="absolute top-4 right-4 bg-black/50 backdrop-blur text-xs text-white p-2 rounded pointer-events-none">
-        <div>Faces: {(baseGeometry.index ? baseGeometry.index.count / 3 : baseGeometry.attributes.position.count / 3) + (bricksGeometry ? (bricksGeometry.index ? bricksGeometry.index.count / 3 : bricksGeometry.attributes.position.count / 3) : 0)}</div>
+        <div>Faces: {
+          (baseplateChunks ? baseplateChunks.reduce((acc, chunk) => {
+            const faces = chunk.geometry.index ? chunk.geometry.index.count / 3 : chunk.geometry.attributes.position.count / 3;
+            return acc + faces;
+          }, 0) : 0) + 
+          (instancedBricks ? instancedBricks.reduce((acc, group) => {
+            const faces = group.geometry.index ? group.geometry.index.count / 3 : group.geometry.attributes.position.count / 3;
+            return acc + (faces * group.count);
+          }, 0) : 0)
+        }</div>
       </div>
     </div>
   );
