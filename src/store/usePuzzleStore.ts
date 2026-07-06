@@ -46,6 +46,9 @@ export interface PuzzleState {
 
   highResMode: boolean;
   setHighResMode: (val: boolean) => void;
+  
+  dismissedPreviewBanner: boolean;
+  setDismissedPreviewBanner: (val: boolean) => void;
 
   activeEditChunk: { startX: number; startZ: number; width: number; length: number } | null;
   setActiveEditChunk: (chunk: { startX: number; startZ: number; width: number; length: number } | null) => void;
@@ -69,7 +72,7 @@ export interface PuzzleState {
   setInfillPercentage: (infill: number) => void;
   setShellCount: (shells: number) => void;
   setMaterialProfile: (profile: MaterialProfile) => void;
-  setVoxelMatrix: (matrix: VoxelMatrix | null) => void;
+  setVoxelMatrix: (matrix: VoxelMatrix | null, isNewImage?: boolean) => void;
   setActivePaintColor: (color: PaletteColor | null) => void;
   
   commitHistory: () => void;
@@ -130,6 +133,9 @@ export const usePuzzleStore = create<PuzzleState>()(
       highResMode: false,
       setHighResMode: (val) => set({ highResMode: val }),
 
+      dismissedPreviewBanner: false,
+      setDismissedPreviewBanner: (val) => set({ dismissedPreviewBanner: val }),
+
       activeEditChunk: null,
       setActiveEditChunk: (chunk) => set({ activeEditChunk: chunk }),
       skipSplitPrompt: false,
@@ -157,16 +163,27 @@ export const usePuzzleStore = create<PuzzleState>()(
 
       setInfillPercentage: (infillPercentage) => set({ infillPercentage }),
       setShellCount: (shellCount) => set({ shellCount }),
-      setMaterialProfile: (materialProfile) => set({ materialProfile }),
-      setVoxelMatrix: (voxelMatrix) => set({ 
-        voxelMatrix,
-        originalVoxelMatrix: voxelMatrix ? structuredClone(voxelMatrix) : null,
-        history: voxelMatrix ? [structuredClone(voxelMatrix)] : [],
-        historyIndex: voxelMatrix ? 0 : -1,
-        activeEditChunk: null,
-        skipSplitPrompt: false,
-        customBricks: null
-      }),
+      setMaterialProfile: (profile) => set({ materialProfile: profile }),
+      setVoxelMatrix: (matrix, isNewImage = false) => {
+        set((state) => {
+          const baseState = {
+            voxelMatrix: matrix,
+            originalVoxelMatrix: matrix ? structuredClone(matrix) : null,
+            history: matrix ? [structuredClone(matrix)] : [],
+            historyIndex: matrix ? 0 : -1,
+            activeEditChunk: null,
+            skipSplitPrompt: false,
+            customBricks: null
+          };
+          if (isNewImage) {
+            return {
+              ...baseState,
+              dismissedPreviewBanner: false
+            };
+          }
+          return baseState;
+        });
+      },
       setActivePaintColor: (activePaintColor) => set({ activePaintColor }),
       
       setPaintMode: (mode) => set({ paintMode: mode }),

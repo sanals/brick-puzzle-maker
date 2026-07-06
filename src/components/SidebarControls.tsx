@@ -257,7 +257,7 @@ export function SidebarControls() {
         setIsProcessing(false);
         const data = msg.data;
         if (data.type === 'result') {
-          setVoxelMatrix(data.matrix);
+          setVoxelMatrix(data.matrix, true);
           // Default select the first color to paint with
           if (data.matrix.palette.length > 0) {
             setActivePaintColor(data.matrix.palette[0]);

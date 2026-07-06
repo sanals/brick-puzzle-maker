@@ -1,5 +1,4 @@
 'use client';
-
 import { SidebarControls } from '@/components/SidebarControls';
 import { CanvasView } from '@/components/CanvasView';
 import { PixelMapView } from '@/components/PixelMapView';

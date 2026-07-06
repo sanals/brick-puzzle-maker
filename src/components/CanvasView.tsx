@@ -9,7 +9,7 @@ import { KlemmbrickGenerator } from '@/lib/geometry/klemmbrick-generator';
 import { calculateTolerances, STUD_PITCH } from '@/lib/math/tolerances';
 import { usePuzzleStore, MaterialProfile } from '@/store/usePuzzleStore';
 import * as THREE from 'three';
-import { X } from 'lucide-react';
+import { X, Info } from 'lucide-react';
 
 const geometryCache = new Map<string, THREE.BufferGeometry>();
 
@@ -90,16 +90,29 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
     skipSplitPrompt,
     setSkipSplitPrompt,
     setFacesCount,
-    highResMode
+    highResMode,
+    dismissedPreviewBanner,
+    setDismissedPreviewBanner
   } = usePuzzleStore();
   const controlsRef = useRef<any>(null);
 
   // Reset camera when triggered
   useEffect(() => {
     if (cameraResetTrigger > 0 && controlsRef.current) {
-      controlsRef.current.reset();
+      if (activeEditChunk) {
+        const targetX = ((activeEditChunk.startX + activeEditChunk.width / 2) - width / 2) * 8.0;
+        const targetZ = ((activeEditChunk.startZ + activeEditChunk.length / 2) - length / 2) * 8.0;
+        
+        controlsRef.current.target.set(targetX, 0, targetZ);
+        controlsRef.current.object.position.set(targetX, 50, targetZ + 50);
+        controlsRef.current.update();
+      } else {
+        controlsRef.current.target.set(0, 0, 0);
+        controlsRef.current.object.position.set(0, 50, 50);
+        controlsRef.current.update();
+      }
     }
-  }, [cameraResetTrigger]);
+  }, [cameraResetTrigger, activeEditChunk, width, length]);
 
   const [hoverAction, setHoverAction] = useState<{
     type: 'cut' | 'join';
@@ -713,7 +726,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         {/* Global Raycast Plane - Solves massive CSG Raycasting lag */}
         <mesh 
           rotation={[-Math.PI / 2, 0, 0]} 
-          position={[0, 9.6, 0]}
+          position={[0, explodedView ? 17.8 : 12.8, 0]}
           onClick={handleClick}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -730,6 +743,7 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
           enablePan={true}
           enableZoom={true}
           enableRotate={true} 
+          enableDamping={false}
           minPolarAngle={0} 
         />
       </Canvas>
@@ -763,13 +777,30 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
         </div>
       )}
 
-      {/* Minimap Overlay */}
-      {activeEditChunk && (
-        <div className="absolute top-4 right-4 bg-zinc-900/90 backdrop-blur-md border border-zinc-700 p-2 rounded-lg shadow-2xl z-10 flex flex-col gap-1">
-          <div className="text-xs font-bold text-zinc-400 mb-1 px-1 flex justify-between items-center">
-            Chunk Navigator
+      {/* Top Right Floating UI */}
+      <div className="absolute top-4 right-4 flex flex-col items-end gap-3 z-10 pointer-events-none">
+        
+        {/* Fast Preview Banner */}
+        {!highResMode && !dismissedPreviewBanner && (
+          <div className="flex items-center gap-2 bg-[#12141c]/90 border border-emerald-500/20 text-emerald-400 px-3 py-2 rounded-lg text-xs font-medium shadow-xl backdrop-blur-md pointer-events-auto">
+            <Info size={16} className="shrink-0" />
+            <span>Fast Preview Active. Disable to see print-ready rendering.</span>
             <button 
-              onClick={() => setActiveEditChunk(null)}
+              onClick={() => setDismissedPreviewBanner(true)}
+              className="p-1 hover:bg-emerald-500/20 rounded-md transition-colors ml-2"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Minimap Overlay */}
+        {activeEditChunk && (
+          <div className="bg-zinc-900/90 backdrop-blur-md border border-zinc-700 p-2 rounded-lg shadow-2xl flex flex-col gap-1 pointer-events-auto">
+            <div className="text-xs font-bold text-zinc-400 mb-1 px-1 flex justify-between items-center">
+              Chunk Navigator
+              <button 
+                onClick={() => setActiveEditChunk(null)}
               className="text-zinc-500 hover:text-white p-0.5 rounded hover:bg-zinc-800 transition-colors ml-4"
               title="Close Navigator"
             >
@@ -804,7 +835,8 @@ export function CanvasView({ width, length, materialProfile, snapFit }: CanvasVi
             ))}
           </div>
         </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
